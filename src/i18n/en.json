@@ -1,0 +1,57 @@
+{
+  "app.title": "Holorado Website Audit Tool",
+  "app.subtitle": "Crawl a site to find broken links and redirects",
+
+  "form.startUrl": "Start URL",
+  "form.startUrl.placeholder": "https://example.com",
+  "form.sameDomainOnly": "Same domain only",
+  "form.includeSubdomains": "Include subdomains",
+  "form.maxPages": "Max pages",
+  "form.maxDepth": "Max depth",
+  "form.timeoutMs": "Timeout (ms)",
+  "form.concurrency": "Concurrency",
+  "form.respectRobotsTxt": "Respect robots.txt",
+  "form.excludeAuthPages": "Exclude auth-required pages",
+  "form.start": "Start crawl",
+  "form.reset": "Reset",
+  "form.invalidUrl": "Enter a valid URL (http:// or https://)",
+
+  "status.idle": "Idle",
+  "status.running": "Crawling",
+  "status.done": "Done",
+  "status.error": "Error",
+  "progress.label": "Processed {{processed}} / Queued {{queued}}",
+
+  "summary.pagesScanned": "Pages Scanned",
+  "summary.brokenLinks": "Broken Links",
+  "summary.redirects": "Redirects",
+  "summary.brokenImages": "Broken Images",
+  "summary.a11yIssues": "A11y Issues",
+  "summary.standardsIssues": "Standards Issues",
+
+  "table.sourcePage": "Source Page",
+  "table.targetUrl": "Target URL",
+  "table.status": "Status",
+  "table.issue": "Issue",
+  "table.category": "Category",
+  "table.redirectCount": "Redirect Count",
+  "table.responseTime": "Response Time",
+  "table.empty": "No results to show",
+  "table.search.placeholder": "Search URL or issue",
+
+  "filter.all": "All",
+  "filter.broken": "Broken",
+  "filter.redirect": "Redirect",
+  "filter.image": "Image",
+  "filter.external": "External",
+  "filter.internal": "Internal",
+
+  "severity.error": "Error",
+  "severity.warning": "Warning",
+  "severity.info": "Info",
+
+  "category.link": "Link",
+  "category.seo": "SEO",
+  "category.a11y": "A11y",
+  "category.standards": "Standards"
+}

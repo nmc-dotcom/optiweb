@@ -1,0 +1,57 @@
+{
+  "app.title": "Holorado 웹사이트 진단 도구",
+  "app.subtitle": "사이트를 크롤링하여 깨진 링크와 리다이렉트를 점검합니다",
+
+  "form.startUrl": "시작 URL",
+  "form.startUrl.placeholder": "https://example.com",
+  "form.sameDomainOnly": "같은 도메인만 크롤링",
+  "form.includeSubdomains": "서브도메인 포함",
+  "form.maxPages": "최대 페이지 수",
+  "form.maxDepth": "최대 Depth",
+  "form.timeoutMs": "타임아웃 (ms)",
+  "form.concurrency": "동시 요청 수",
+  "form.respectRobotsTxt": "robots.txt 준수",
+  "form.excludeAuthPages": "인증 페이지 제외",
+  "form.start": "크롤링 시작",
+  "form.reset": "초기화",
+  "form.invalidUrl": "올바른 URL을 입력하세요 (http:// 또는 https://)",
+
+  "status.idle": "대기 중",
+  "status.running": "크롤링 중",
+  "status.done": "완료",
+  "status.error": "오류",
+  "progress.label": "처리 {{processed}} / 대기열 {{queued}}",
+
+  "summary.pagesScanned": "검사한 페이지",
+  "summary.brokenLinks": "깨진 링크",
+  "summary.redirects": "리다이렉트",
+  "summary.brokenImages": "깨진 이미지",
+  "summary.a11yIssues": "접근성 이슈",
+  "summary.standardsIssues": "웹 표준 이슈",
+
+  "table.sourcePage": "출발 페이지",
+  "table.targetUrl": "대상 URL",
+  "table.status": "상태",
+  "table.issue": "이슈",
+  "table.category": "분류",
+  "table.redirectCount": "리다이렉트 수",
+  "table.responseTime": "응답 시간",
+  "table.empty": "표시할 결과가 없습니다",
+  "table.search.placeholder": "URL 또는 이슈 검색",
+
+  "filter.all": "전체",
+  "filter.broken": "깨짐",
+  "filter.redirect": "리다이렉트",
+  "filter.image": "이미지",
+  "filter.external": "외부",
+  "filter.internal": "내부",
+
+  "severity.error": "오류",
+  "severity.warning": "경고",
+  "severity.info": "정보",
+
+  "category.link": "링크",
+  "category.seo": "SEO",
+  "category.a11y": "접근성",
+  "category.standards": "웹 표준"
+}

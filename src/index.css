@@ -1,0 +1,113 @@
+@import "tailwindcss";
+
+/*
+ * Holorado design tokens, ported as-is from:
+ * https://raw.githubusercontent.com/nmc-dotcom/holorado-hub/main/src/styles/global.css
+ * Mapped into a Tailwind v4 @theme so `bg-background`, `text-primary`, etc. resolve
+ * to the holorado palette instead of Tailwind's defaults.
+ */
+@theme inline {
+  --color-background: var(--cream);
+  --color-foreground: var(--ink);
+  --color-card: var(--paper);
+  --color-card-foreground: var(--ink);
+  --color-popover: var(--paper);
+  --color-popover-foreground: var(--ink);
+  --color-primary: var(--green);
+  --color-primary-foreground: #ffffff;
+  --color-secondary: var(--cream-deep);
+  --color-secondary-foreground: var(--ink);
+  --color-muted: var(--cream-deep);
+  --color-muted-foreground: var(--muted);
+  --color-accent: var(--sand);
+  --color-accent-foreground: var(--green-deep);
+  --color-destructive: var(--brick);
+  --color-destructive-foreground: #ffffff;
+  --color-warning: var(--amber);
+  --color-warning-foreground: var(--ink);
+  --color-success: var(--green);
+  --color-success-foreground: #ffffff;
+  --color-border: var(--line);
+  --color-input: var(--line);
+  --color-ring: var(--terracotta);
+
+  --color-terracotta: var(--terracotta);
+  --color-terracotta-soft: var(--terracotta-soft);
+  --color-green-soft: var(--green-soft);
+  --color-green-deep: var(--green-deep);
+  --color-sand: var(--sand);
+
+  --font-sans: var(--font-sans);
+  --font-serif: var(--font-serif);
+
+  --radius-sm: calc(var(--radius) - 6px);
+  --radius-md: var(--radius);
+  --radius-lg: var(--radius-lg-token);
+  --radius-xl: calc(var(--radius-lg-token) + 8px);
+}
+
+:root {
+  /* palette (ported verbatim from holorado-hub) */
+  --cream: #f3eee0; /* 배경 */
+  --cream-deep: #ece4d2; /* 카드 대비 배경 */
+  --paper: #fbf8f0; /* 카드 표면 */
+  --ink: #2c2a24; /* 본문 텍스트 */
+  --muted: #6f695b; /* 보조 텍스트 */
+  --line: #e2d8c2; /* 구분선 */
+
+  --green: #2f6b4f; /* 메인 딥그린 */
+  --green-soft: #3e8e5f;
+  --green-deep: #234e3a;
+  --terracotta: #c96f4a; /* 포인트 */
+  --terracotta-soft: #db8a66;
+  --sand: #e3cea9;
+
+  /* not part of the holorado brand palette — added for status semantics
+     (redirect/broken), tuned to sit inside the warm cream/green/terracotta mood */
+  --amber: #c9a227;
+  --brick: #b23b3b;
+
+  --font-serif: "Nanum Myeongjo", "Apple SD Gothic Neo", serif;
+  --font-sans:
+    "Pretendard", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+
+  --radius: 12px;
+  --radius-lg-token: 20px;
+  --shadow: 0 6px 24px rgba(44, 42, 36, 0.08);
+  --shadow-hover: 0 12px 34px rgba(44, 42, 36, 0.13);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-sans);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    word-break: keep-all;
+    overflow-wrap: break-word;
+  }
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-serif);
+    font-weight: 800;
+    letter-spacing: -0.01em;
+  }
+  ::selection {
+    @apply bg-primary/30;
+  }
+  :focus-visible {
+    outline: 3px solid var(--terracotta);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+}
