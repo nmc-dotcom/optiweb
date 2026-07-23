@@ -5,6 +5,12 @@ export interface FetchProxyOptions {
   /** Extra attempts after the first, on 429/5xx/timeout/network only. Default 1. */
   retries?: number;
   resourceType?: ResourceType;
+  /** POST is used only by the SSO auto-follow feature (ssoFollow.ts) to submit a form. */
+  method?: "GET" | "POST";
+  /** application/x-www-form-urlencoded body, POST only. */
+  body?: string;
+  /** Cookie header value to send to the target (assembled by the caller's CookieJar). */
+  cookie?: string;
 }
 
 function resourceHint(
@@ -32,34 +38,58 @@ function emptyResult(
     bodyTruncated: false,
     responseTimeMs,
     errorType,
+    setCookies: [],
   };
+}
+
+async function handleGuardResponse(
+  res: Response,
+  url: string,
+  started: number,
+): Promise<ProxyResponse | null> {
+  if (res.status !== 400 && res.status !== 403) return null;
+  const data = (await res.json().catch(() => ({}))) as { error?: string };
+  return emptyResult(
+    url,
+    data.error === "origin_blocked" ? "origin_blocked" : "ssrf_blocked",
+    Date.now() - started,
+  );
 }
 
 async function fetchOnce(
   url: string,
   timeoutMs: number,
-  resourceType?: ResourceType,
+  options: FetchProxyOptions,
 ): Promise<ProxyResponse> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   const started = Date.now();
-  const params = new URLSearchParams({ url });
-  const hint = resourceHint(resourceType);
-  if (hint) params.set("type", hint);
 
   try {
-    const res = await fetch(`/api/fetch?${params.toString()}`, {
-      signal: controller.signal,
-    });
-
-    if (res.status === 400 || res.status === 403) {
-      const data = (await res.json().catch(() => ({}))) as { error?: string };
-      return emptyResult(
-        url,
-        data.error === "origin_blocked" ? "origin_blocked" : "ssrf_blocked",
-        Date.now() - started,
-      );
+    let res: Response;
+    if (options.method === "POST") {
+      res = await fetch("/api/fetch", {
+        method: "POST",
+        signal: controller.signal,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          url,
+          method: "POST",
+          body: options.body,
+          cookie: options.cookie,
+        }),
+      });
+    } else {
+      const params = new URLSearchParams({ url });
+      const hint = resourceHint(options.resourceType);
+      if (hint) params.set("type", hint);
+      res = await fetch(`/api/fetch?${params.toString()}`, {
+        signal: controller.signal,
+      });
     }
+
+    const guardResult = await handleGuardResponse(res, url, started);
+    if (guardResult) return guardResult;
 
     return (await res.json()) as ProxyResponse;
   } catch (err) {
@@ -88,7 +118,7 @@ export async function fetchProxy(
   options: FetchProxyOptions,
 ): Promise<ProxyResponse> {
   const retries = options.retries ?? 1;
-  let result = await fetchOnce(url, options.timeoutMs, options.resourceType);
+  let result = await fetchOnce(url, options.timeoutMs, options);
 
   for (let attempt = 1; attempt <= retries; attempt++) {
     if (
@@ -98,7 +128,7 @@ export async function fetchProxy(
       break;
     const backoffMs = 300 * 2 ** (attempt - 1);
     await new Promise((resolve) => setTimeout(resolve, backoffMs));
-    result = await fetchOnce(url, options.timeoutMs, options.resourceType);
+    result = await fetchOnce(url, options.timeoutMs, options);
   }
 
   return result;

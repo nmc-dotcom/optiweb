@@ -95,6 +95,9 @@ export function CrawlForm() {
   const [excludeAuthPages, setExcludeAuthPages] = useState(
     DEFAULT_CRAWL_CONFIG.excludeAuthPages,
   );
+  const [ssoAutoFollow, setSsoAutoFollow] = useState(
+    DEFAULT_CRAWL_CONFIG.ssoAutoFollow,
+  );
   const [error, setError] = useState<string | null>(null);
 
   function handleSubmit(event: FormEvent) {
@@ -123,6 +126,7 @@ export function CrawlForm() {
       concurrency: Math.min(Math.max(1, concurrency), 10),
       respectRobotsTxt,
       excludeAuthPages,
+      ssoAutoFollow,
     };
 
     void runCrawl(config).catch(() => {
@@ -216,6 +220,18 @@ export function CrawlForm() {
           disabled={isRunning}
           onChange={setExcludeAuthPages}
         />
+      </div>
+
+      <div>
+        <CheckboxField
+          label={t("form.ssoAutoFollow")}
+          checked={ssoAutoFollow}
+          disabled={isRunning}
+          onChange={setSsoAutoFollow}
+        />
+        <p className="mt-1 pl-6 text-xs text-muted-foreground">
+          {t("form.ssoAutoFollow.hint")}
+        </p>
       </div>
 
       <button

@@ -28,6 +28,8 @@ export interface ProxyResponse {
   bodyTruncated: boolean;
   responseTimeMs: number;
   errorType?: ProxyErrorType;
+  /** Raw Set-Cookie headers seen across every hop of this call. Always present (possibly empty). */
+  setCookies: string[];
 }
 
 export type ResourceType =
@@ -47,6 +49,8 @@ export interface CrawlConfig {
   concurrency: number;
   respectRobotsTxt: boolean;
   excludeAuthPages: boolean;
+  /** Experimental, default off — auto-submits hidden-only SSO bootstrap forms. See ssoFollow.ts. */
+  ssoAutoFollow: boolean;
 }
 
 export const DEFAULT_CRAWL_CONFIG: Omit<CrawlConfig, "startUrl"> = {
@@ -58,6 +62,7 @@ export const DEFAULT_CRAWL_CONFIG: Omit<CrawlConfig, "startUrl"> = {
   concurrency: 4,
   respectRobotsTxt: true,
   excludeAuthPages: true,
+  ssoAutoFollow: false,
 };
 
 export const MAX_PAGES_LIMIT = 500;
@@ -82,6 +87,8 @@ export interface LinkResult {
   issue: string;
 }
 
+export type SsoOutcomeKind = "resolved" | "failed" | "skipped-credentials";
+
 export interface PageResult {
   url: string;
   depth: number;
@@ -93,6 +100,10 @@ export interface PageResult {
   requiresAuth: boolean;
   blockedByRobots: boolean;
   discoveredAt: number;
+  ssoOutcome?: SsoOutcomeKind;
+  ssoHops?: number;
+  /** Cookie *domains* touched during SSO follow — never values. */
+  ssoCookieDomains?: string[];
 }
 
 export interface CrawlSummary {
@@ -100,6 +111,7 @@ export interface CrawlSummary {
   brokenLinks: number;
   redirects: number;
   brokenImages: number;
+  seoWarnings: number;
   a11yIssues: number;
   standardsIssues: number;
 }

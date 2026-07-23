@@ -1,10 +1,20 @@
 import { useMemo, useState } from "react";
 import { useI18n } from "../i18n";
 import { useCrawlerStore } from "../features/crawler/useCrawlerStore";
-import type { LinkResult } from "../types";
+import { severityBadgeClass } from "../lib/severityStyle";
+import { PageDetailModal } from "./PageDetailModal";
+import type { IssueCategory, IssueSeverity, ResourceType } from "../types";
 
 type FilterKey =
-  "all" | "broken" | "redirect" | "image" | "external" | "internal";
+  | "all"
+  | "broken"
+  | "redirect"
+  | "image"
+  | "external"
+  | "internal"
+  | "seo"
+  | "a11y"
+  | "standards";
 const FILTERS: FilterKey[] = [
   "all",
   "broken",
@@ -12,68 +22,131 @@ const FILTERS: FilterKey[] = [
   "image",
   "external",
   "internal",
+  "seo",
+  "a11y",
+  "standards",
 ];
+
+type SeverityFilter = "all" | IssueSeverity;
+const SEVERITY_FILTERS: SeverityFilter[] = ["all", "error", "warning", "info"];
 
 type SortKey = "status" | "responseTimeMs" | "redirectCount";
 type SortDir = "asc" | "desc";
 
-function matchesFilter(link: LinkResult, filter: FilterKey): boolean {
+/** One row = either a checked link/page (from linkResults) or an SEO/A11y/Standards finding
+ * (from ruleIssues), merged at render time so the table can show/filter/sort both uniformly
+ * without changing the underlying LinkResult/RuleIssueEntry shapes. */
+interface UnifiedRow {
+  id: string;
+  pageUrl: string;
+  sourcePage: string;
+  targetUrl: string;
+  status: number | null;
+  issue: string;
+  ruleId?: string;
+  category: IssueCategory;
+  severity: IssueSeverity;
+  isBroken: boolean;
+  isExternal: boolean;
+  resourceType: ResourceType;
+  redirectCount: number;
+  responseTimeMs: number | null;
+}
+
+function matchesFilter(row: UnifiedRow, filter: FilterKey): boolean {
   switch (filter) {
     case "all":
       return true;
     case "broken":
-      return link.isBroken;
+      return row.isBroken;
     case "redirect":
-      return link.redirectChain.length > 0;
+      return row.redirectCount > 0;
     case "image":
-      return link.resourceType === "image";
+      return row.resourceType === "image";
     case "external":
-      return link.isExternal;
+      return row.isExternal;
     case "internal":
-      return !link.isExternal;
+      return !row.isExternal;
+    case "seo":
+      return row.category === "seo";
+    case "a11y":
+      return row.category === "a11y";
+    case "standards":
+      return row.category === "standards";
   }
 }
 
-function severityBadgeClass(severity: LinkResult["severity"]): string {
-  switch (severity) {
-    case "error":
-      return "bg-destructive/10 text-destructive";
-    case "warning":
-      return "bg-warning/20 text-foreground";
-    case "info":
-      return "bg-muted text-muted-foreground";
-  }
-}
-
-function sortValue(link: LinkResult, key: SortKey): number {
-  if (key === "redirectCount") return link.redirectChain.length;
-  if (key === "responseTimeMs") return link.responseTimeMs;
-  return link.status;
+function sortValue(row: UnifiedRow, key: SortKey): number {
+  if (key === "redirectCount") return row.redirectCount;
+  if (key === "responseTimeMs") return row.responseTimeMs ?? -1;
+  return row.status ?? -1;
 }
 
 export function ResultsTable() {
   const { t } = useI18n();
   const linkResults = useCrawlerStore((s) => s.linkResults);
+  const ruleIssues = useCrawlerStore((s) => s.ruleIssues);
   const [filter, setFilter] = useState<FilterKey>("all");
+  const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("all");
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("status");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [selectedPageUrl, setSelectedPageUrl] = useState<string | null>(null);
 
-  const rows = useMemo(() => {
+  const rows = useMemo<UnifiedRow[]>(() => {
+    const fromLinks: UnifiedRow[] = linkResults.map((link) => ({
+      id: link.id,
+      pageUrl: link.targetUrl,
+      sourcePage: link.sourceUrl || "(start)",
+      targetUrl: link.targetUrl,
+      status: link.status,
+      issue: link.issue,
+      category: link.category,
+      severity: link.severity,
+      isBroken: link.isBroken,
+      isExternal: link.isExternal,
+      resourceType: link.resourceType,
+      redirectCount: link.redirectChain.length,
+      responseTimeMs: link.responseTimeMs,
+    }));
+
+    const fromRules: UnifiedRow[] = ruleIssues.map((entry, index) => ({
+      id: `rule-${index}-${entry.issue.ruleId}`,
+      pageUrl: entry.pageUrl,
+      sourcePage: entry.pageUrl,
+      targetUrl: entry.pageUrl,
+      status: null,
+      issue: t(entry.issue.message, entry.issue.messageVars),
+      ruleId: entry.issue.ruleId,
+      category: entry.issue.category,
+      severity: entry.issue.severity,
+      isBroken: false,
+      isExternal: false,
+      resourceType: "page",
+      redirectCount: 0,
+      responseTimeMs: null,
+    }));
+
+    return [...fromLinks, ...fromRules];
+  }, [linkResults, ruleIssues, t]);
+
+  const visibleRows = useMemo(() => {
     const query = search.trim().toLowerCase();
-    const filtered = linkResults.filter((link) => {
-      if (!matchesFilter(link, filter)) return false;
+    const filtered = rows.filter((row) => {
+      if (!matchesFilter(row, filter)) return false;
+      if (severityFilter !== "all" && row.severity !== severityFilter)
+        return false;
       if (!query) return true;
       return (
-        link.targetUrl.toLowerCase().includes(query) ||
-        link.issue.toLowerCase().includes(query)
+        row.targetUrl.toLowerCase().includes(query) ||
+        row.issue.toLowerCase().includes(query)
       );
     });
     return [...filtered].sort((a, b) => {
       const diff = sortValue(a, sortKey) - sortValue(b, sortKey);
       return sortDir === "asc" ? diff : -diff;
     });
-  }, [linkResults, filter, search, sortKey, sortDir]);
+  }, [rows, filter, severityFilter, search, sortKey, sortDir]);
 
   function toggleSort(key: SortKey) {
     if (sortKey === key) {
@@ -101,6 +174,19 @@ export function ResultsTable() {
             {t(`filter.${f}`)}
           </button>
         ))}
+
+        <select
+          value={severityFilter}
+          onChange={(e) => setSeverityFilter(e.target.value as SeverityFilter)}
+          className="rounded-md border border-input bg-background px-2 py-1 text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {SEVERITY_FILTERS.map((s) => (
+            <option key={s} value={s}>
+              {t(s === "all" ? "severity.all" : `severity.${s}`)}
+            </option>
+          ))}
+        </select>
+
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -108,6 +194,12 @@ export function ResultsTable() {
           className="ml-auto w-64 max-w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
+
+      {filter === "a11y" && (
+        <p className="rounded-md border border-terracotta/40 bg-accent/60 px-3 py-2 text-xs text-green-deep">
+          {t("a11y.disclaimer")}
+        </p>
+      )}
 
       <div className="overflow-x-auto rounded-lg border border-border">
         <table className="w-full min-w-[900px] border-collapse text-sm">
@@ -138,7 +230,7 @@ export function ResultsTable() {
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 && (
+            {visibleRows.length === 0 && (
               <tr>
                 <td
                   colSpan={7}
@@ -148,52 +240,60 @@ export function ResultsTable() {
                 </td>
               </tr>
             )}
-            {rows.map((link) => (
+            {visibleRows.map((row) => (
               <tr
-                key={link.id}
-                className="border-b border-border last:border-0 hover:bg-secondary/50"
+                key={row.id}
+                onClick={() => setSelectedPageUrl(row.pageUrl)}
+                className="cursor-pointer border-b border-border last:border-0 hover:bg-secondary/50"
               >
                 <td
                   className="max-w-xs truncate px-3 py-2 text-muted-foreground"
-                  title={link.sourceUrl || undefined}
+                  title={row.sourcePage}
                 >
-                  {link.sourceUrl || "(start)"}
+                  {row.sourcePage}
                 </td>
                 <td
                   className="max-w-xs truncate px-3 py-2"
-                  title={link.targetUrl}
+                  title={row.targetUrl}
                 >
-                  <a
-                    href={link.targetUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="hover:underline"
-                  >
-                    {link.targetUrl}
-                  </a>
+                  {row.targetUrl}
                 </td>
-                <td className="px-3 py-2 tabular-nums">{link.status || "—"}</td>
+                <td className="px-3 py-2 tabular-nums">{row.status || "—"}</td>
                 <td className="px-3 py-2">
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-xs font-medium ${severityBadgeClass(link.severity)}`}
-                  >
-                    {link.issue}
+                  <span className="inline-flex flex-wrap items-center gap-1.5">
+                    {row.ruleId && (
+                      <span className="rounded-full bg-secondary px-1.5 py-0.5 text-[11px] font-semibold text-foreground">
+                        {row.ruleId}
+                      </span>
+                    )}
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${severityBadgeClass(row.severity)}`}
+                    >
+                      {row.issue}
+                    </span>
                   </span>
                 </td>
                 <td className="px-3 py-2 text-muted-foreground">
-                  {t(`category.${link.category}`)}
+                  {t(`category.${row.category}`)}
                 </td>
+                <td className="px-3 py-2 tabular-nums">{row.redirectCount}</td>
                 <td className="px-3 py-2 tabular-nums">
-                  {link.redirectChain.length}
-                </td>
-                <td className="px-3 py-2 tabular-nums">
-                  {link.responseTimeMs} ms
+                  {row.responseTimeMs !== null
+                    ? `${row.responseTimeMs} ms`
+                    : "—"}
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      {selectedPageUrl && (
+        <PageDetailModal
+          pageUrl={selectedPageUrl}
+          onClose={() => setSelectedPageUrl(null)}
+        />
+      )}
     </div>
   );
 }

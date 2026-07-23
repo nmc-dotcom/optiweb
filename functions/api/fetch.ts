@@ -175,26 +175,37 @@ async function readCappedText(
 // Redirect stepping
 // ---------------------------------------------------------------------------
 
+interface FollowOptions {
+  method: "GET" | "HEAD" | "POST";
+  body?: string;
+  cookieHeader?: string;
+}
+
 interface FollowResult {
   finalUrl: string;
   chain: RedirectHop[];
   isRedirectLoop: boolean;
   response?: Response;
+  /** Set-Cookie headers seen across every hop of this call (raw, unparsed). */
+  setCookies: string[];
   errorType?: "timeout" | "network" | "ssrf_blocked" | "too_many_redirects";
 }
 
 async function followRedirects(
   startUrl: URL,
-  method: "GET" | "HEAD",
+  options: FollowOptions,
 ): Promise<FollowResult> {
   const chain: RedirectHop[] = [];
   const seen = new Set<string>();
+  const setCookies: string[] = [];
   let current = startUrl;
+  let method = options.method;
+  let body = options.body;
 
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     const key = current.toString();
     if (seen.has(key)) {
-      return { finalUrl: key, chain, isRedirectLoop: true };
+      return { finalUrl: key, chain, isRedirectLoop: true, setCookies };
     }
     seen.add(key);
 
@@ -205,6 +216,7 @@ async function followRedirects(
         chain,
         isRedirectLoop: false,
         errorType: "ssrf_blocked",
+        setCookies,
       };
     }
 
@@ -212,11 +224,16 @@ async function followRedirects(
     const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
     let res: Response;
     try {
+      const headers: Record<string, string> = { "User-Agent": USER_AGENT };
+      if (options.cookieHeader) headers["Cookie"] = options.cookieHeader;
+      if (method === "POST")
+        headers["Content-Type"] = "application/x-www-form-urlencoded";
       res = await fetch(current.toString(), {
         method,
         redirect: "manual",
         signal: controller.signal,
-        headers: { "User-Agent": USER_AGENT },
+        headers,
+        body: method === "POST" ? body : undefined,
       });
     } catch (err) {
       clearTimeout(timeoutId);
@@ -226,9 +243,12 @@ async function followRedirects(
         chain,
         isRedirectLoop: false,
         errorType: isAbort ? "timeout" : "network",
+        setCookies,
       };
     }
     clearTimeout(timeoutId);
+
+    for (const cookie of res.headers.getSetCookie()) setCookies.push(cookie);
 
     const location = res.headers.get("location");
     if (res.status >= 300 && res.status < 400 && location) {
@@ -241,12 +261,29 @@ async function followRedirects(
           chain,
           isRedirectLoop: false,
           errorType: "network",
+          setCookies,
         };
+      }
+      // Browser-realistic redirect semantics: 303 (and, by long-standing real-world
+      // convention that servers rely on, 301/302 too) downgrades POST to GET and drops the
+      // body; 307/308 preserve method+body.
+      if (
+        method === "POST" &&
+        (res.status === 301 || res.status === 302 || res.status === 303)
+      ) {
+        method = "GET";
+        body = undefined;
       }
       continue;
     }
 
-    return { finalUrl: key, chain, isRedirectLoop: false, response: res };
+    return {
+      finalUrl: key,
+      chain,
+      isRedirectLoop: false,
+      response: res,
+      setCookies,
+    };
   }
 
   return {
@@ -254,6 +291,7 @@ async function followRedirects(
     chain,
     isRedirectLoop: false,
     errorType: "too_many_redirects",
+    setCookies,
   };
 }
 
@@ -303,7 +341,7 @@ export const onRequestGet: PagesFunction = async (context) => {
   const method: "GET" | "HEAD" =
     hint === "image" || hint === "pdf" ? "HEAD" : "GET";
   const startedAt = Date.now();
-  const result = await followRedirects(initialValidation.url, method);
+  const result = await followRedirects(initialValidation.url, { method });
 
   if (result.errorType || !result.response) {
     return json({
@@ -320,6 +358,7 @@ export const onRequestGet: PagesFunction = async (context) => {
       errorType:
         result.errorType ??
         (result.isRedirectLoop ? "too_many_redirects" : "network"),
+      setCookies: result.setCookies,
     });
   }
 
@@ -347,5 +386,114 @@ export const onRequestGet: PagesFunction = async (context) => {
     bodyText,
     bodyTruncated,
     responseTimeMs: Date.now() - startedAt,
+    setCookies: result.setCookies,
+  });
+};
+
+// ---------------------------------------------------------------------------
+// POST handler — used only by the SSO auto-follow feature (src/features/crawler/ssoFollow.ts)
+// to submit a hidden-only bootstrap form and carry a Cookie header. The client sends the
+// target url/method/body/cookie as a JSON body (not query params) since SSO hidden-field
+// payloads like a SAMLRequest can be several KB, too large to safely round-trip in a URL.
+// ---------------------------------------------------------------------------
+
+interface SsoPostPayload {
+  url?: unknown;
+  method?: unknown;
+  body?: unknown;
+  cookie?: unknown;
+}
+
+export const onRequestPost: PagesFunction = async (context) => {
+  const { request } = context;
+  const selfOrigin = new URL(request.url).origin;
+
+  const origin = requestOrigin(request.headers);
+  if (!isAllowedOrigin(origin, selfOrigin)) {
+    return json(
+      {
+        error: "origin_blocked",
+        message: "Requests must originate from this app.",
+      },
+      403,
+    );
+  }
+
+  let payload: SsoPostPayload;
+  try {
+    payload = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400);
+  }
+
+  const requestedUrl = typeof payload.url === "string" ? payload.url : null;
+  if (!requestedUrl) {
+    return json({ error: "missing_url" }, 400);
+  }
+
+  const initialValidation = validateTargetUrl(requestedUrl);
+  if (!initialValidation.ok) {
+    return json({ error: initialValidation.reason }, 400);
+  }
+
+  const method: "GET" | "POST" = payload.method === "GET" ? "GET" : "POST";
+  const body =
+    method === "POST" && typeof payload.body === "string"
+      ? payload.body
+      : undefined;
+  const cookieHeader =
+    typeof payload.cookie === "string" ? payload.cookie : undefined;
+
+  const startedAt = Date.now();
+  const result = await followRedirects(initialValidation.url, {
+    method,
+    body,
+    cookieHeader,
+  });
+
+  if (result.errorType || !result.response) {
+    return json({
+      requestedUrl,
+      finalUrl: result.finalUrl,
+      status: 0,
+      statusText: "",
+      redirectChain: result.chain,
+      isRedirectLoop: result.isRedirectLoop,
+      contentType: null,
+      xRobotsTag: null,
+      bodyTruncated: false,
+      responseTimeMs: Date.now() - startedAt,
+      errorType:
+        result.errorType ??
+        (result.isRedirectLoop ? "too_many_redirects" : "network"),
+      setCookies: result.setCookies,
+    });
+  }
+
+  const res = result.response;
+  const contentType = res.headers.get("content-type");
+  const xRobotsTag = res.headers.get("x-robots-tag");
+
+  let bodyText: string | undefined;
+  let bodyTruncated = false;
+  if (isTextContentType(contentType)) {
+    const read = await readCappedText(res, MAX_BODY_BYTES);
+    bodyText = read.text;
+    bodyTruncated = read.truncated;
+  }
+
+  return json({
+    requestedUrl,
+    finalUrl: result.finalUrl,
+    status: res.status,
+    statusText: res.statusText,
+    redirectChain: result.chain,
+    isRedirectLoop: result.isRedirectLoop,
+    contentType,
+    xRobotsTag,
+    bodyText,
+    bodyTruncated,
+    responseTimeMs: Date.now() - startedAt,
+    setCookies: result.setCookies,
   });
 };
