@@ -1,4 +1,4 @@
-import type { SheetData } from "write-excel-file/browser";
+import type { Cell, SheetData } from "write-excel-file/browser";
 import type { RuleIssueEntry } from "../features/crawler/useCrawlerStore";
 import type {
   BrowserAuditResult,
@@ -34,18 +34,51 @@ export interface WorkbookSheet {
   stickyColumnsCount?: number;
   orientation?: "landscape";
   showGridLines?: boolean;
+  zoomScale?: number;
+  dateFormat?: string;
 }
+
+const PALETTE = {
+  navy: "#173F35",
+  green: "#2F6B4F",
+  mint: "#E1EFE7",
+  cream: "#F7F3E8",
+  sand: "#ECE4D2",
+  amber: "#FCE8B2",
+  red: "#F8DEDA",
+  redText: "#9F2D20",
+  blue: "#DDEBF7",
+  gray: "#EEF1EF",
+  line: "#CBD5D0",
+  white: "#FFFFFF",
+  text: "#20352E",
+} as const;
 
 const HEADER = {
   fontWeight: "bold" as const,
-  backgroundColor: "#2F6B4F",
-  textColor: "#FFFFFF",
+  backgroundColor: PALETTE.green,
+  textColor: PALETTE.white,
   align: "center" as const,
+  alignVertical: "center" as const,
+  wrap: true,
+  height: 30,
+  borderColor: PALETTE.navy,
+  borderStyle: "thin" as const,
 };
 
 const SECTION = {
   fontWeight: "bold" as const,
-  backgroundColor: "#ECE4D2",
+  backgroundColor: PALETTE.sand,
+  textColor: PALETTE.navy,
+  height: 26,
+  alignVertical: "center" as const,
+};
+
+const BODY_CELL = {
+  alignVertical: "top" as const,
+  wrap: true,
+  borderColor: PALETTE.line,
+  borderStyle: "thin" as const,
 };
 
 const NON_STANDARD_RULES = new Set([
@@ -60,6 +93,56 @@ const NON_STANDARD_RULES = new Set([
 
 function header(values: string[]): SheetData[number] {
   return values.map((value) => ({ value, ...HEADER }));
+}
+
+function styledCell(value: Cell, style: Record<string, unknown>): Cell {
+  if (value === null || value === undefined) return value;
+  if (
+    typeof value === "object" &&
+    !(value instanceof Date) &&
+    "value" in value
+  ) {
+    return { ...style, ...value } as Cell;
+  }
+  return { value, ...style } as Cell;
+}
+
+function polishTable(data: SheetData, headerRows = 1): SheetData {
+  return data.map((row, rowIndex) =>
+    row.map((value) =>
+      styledCell(
+        value,
+        rowIndex < headerRows
+          ? HEADER
+          : {
+              ...BODY_CELL,
+              backgroundColor:
+                (rowIndex - headerRows) % 2 === 0 ? PALETTE.white : "#F8FAF9",
+            },
+      ),
+    ),
+  );
+}
+
+function standardTableOptions(
+  overrides: Partial<WorkbookSheet> = {},
+): Pick<
+  WorkbookSheet,
+  | "stickyRowsCount"
+  | "orientation"
+  | "showGridLines"
+  | "zoomScale"
+  | "dateFormat"
+> &
+  Partial<WorkbookSheet> {
+  return {
+    stickyRowsCount: 1,
+    orientation: "landscape",
+    showGridLines: false,
+    zoomScale: 90,
+    dateFormat: "yyyy-mm-dd hh:mm",
+    ...overrides,
+  };
 }
 
 function safeText(value: string | undefined): string {
@@ -143,6 +226,170 @@ function actionableLinkEntries(snapshot: ReportSnapshot): LinkResult[] {
   );
 }
 
+function browserIssueCount(snapshot: ReportSnapshot): number {
+  return (snapshot.browserAuditResults ?? []).reduce(
+    (count, result) => count + result.issues.length,
+    0,
+  );
+}
+
+function issueTotals(snapshot: ReportSnapshot): {
+  errors: number;
+  warnings: number;
+} {
+  let errors = 0;
+  let warnings = 0;
+  for (const entry of actionableRuleEntries(snapshot)) {
+    const count = entry.issue.count ?? 1;
+    if (entry.issue.severity === "error") errors += count;
+    else warnings += count;
+  }
+  for (const entry of actionableLinkEntries(snapshot)) {
+    if (entry.severity === "error") errors += 1;
+    else warnings += 1;
+  }
+  warnings += browserIssueCount(snapshot);
+  return { errors, warnings };
+}
+
+function titleRow(title: string, columnSpan: number): SheetData[number] {
+  return [
+    {
+      value: title,
+      columnSpan,
+      fontSize: 20,
+      fontWeight: "bold",
+      textColor: PALETTE.white,
+      backgroundColor: PALETTE.navy,
+      alignVertical: "center",
+      height: 42,
+    },
+  ];
+}
+
+function kpiLabel(value: string, color: string = PALETTE.green): Cell {
+  return {
+    value,
+    fontWeight: "bold",
+    textColor: PALETTE.white,
+    backgroundColor: color,
+    align: "center",
+    alignVertical: "center",
+    height: 24,
+    borderColor: PALETTE.white,
+    borderStyle: "thin",
+  };
+}
+
+function kpiValue(value: string | number, backgroundColor: string): Cell {
+  return {
+    value,
+    fontSize: 18,
+    fontWeight: "bold",
+    textColor: PALETTE.navy,
+    backgroundColor,
+    align: "center",
+    alignVertical: "center",
+    height: 34,
+    borderColor: PALETTE.white,
+    borderStyle: "thin",
+  };
+}
+
+function priorityCell(priority: "높음" | "보통"): Cell {
+  return {
+    value: priority,
+    fontWeight: "bold",
+    textColor: priority === "높음" ? PALETTE.redText : "#7A4E00",
+    backgroundColor: priority === "높음" ? PALETTE.red : PALETTE.amber,
+    align: "center",
+  };
+}
+
+function pendingCell(): Cell {
+  return {
+    value: "미처리",
+    fontWeight: "bold",
+    backgroundColor: PALETTE.gray,
+    align: "center",
+  };
+}
+
+function buildDeveloperSummarySheet(
+  snapshot: ReportSnapshot,
+  t: Translate,
+): WorkbookSheet {
+  const totals = issueTotals(snapshot);
+  const actionableCount =
+    actionableRuleEntries(snapshot).length +
+    actionableLinkEntries(snapshot).length +
+    browserIssueCount(snapshot);
+  const rows: SheetData = [
+    titleRow("개발자 조치 보고서", 4),
+    [
+      {
+        value: snapshot.config?.startUrl ?? "점검 대상 URL 없음",
+        columnSpan: 4,
+        textColor: PALETTE.green,
+        fontWeight: "bold",
+        backgroundColor: PALETTE.cream,
+        height: 26,
+      },
+    ],
+    [],
+    [
+      kpiLabel("점검 HTML 페이지"),
+      kpiLabel("조치 항목"),
+      kpiLabel("오류", "#A53A2A"),
+      kpiLabel("경고", "#B7791F"),
+    ],
+    [
+      kpiValue(checkedPageCount(snapshot), PALETTE.mint),
+      kpiValue(actionableCount, PALETTE.blue),
+      kpiValue(totals.errors, PALETTE.red),
+      kpiValue(totals.warnings, PALETTE.amber),
+    ],
+    [],
+    [{ value: "권장 작업 순서", ...SECTION, columnSpan: 4 }],
+    [
+      "1",
+      {
+        value: "수정 요청 목록에서 ‘높음’ 우선순위를 먼저 처리합니다.",
+        columnSpan: 3,
+      },
+    ],
+    [
+      "2",
+      {
+        value: "담당자·조치 내용·완료 예정일을 입력해 작업표로 사용합니다.",
+        columnSpan: 3,
+      },
+    ],
+    [
+      "3",
+      {
+        value: "수정 후 재점검 결과 열에 통과 여부와 확인일을 기록합니다.",
+        columnSpan: 3,
+      },
+    ],
+    [],
+    [{ value: "판정 기준", ...SECTION, columnSpan: 4 }],
+    ["높음", "오류·깨진 링크 등 즉시 조치", "보통", "경고·호환성 개선"],
+    [
+      "자동점검 범위",
+      { value: t("report.safeScopeDetail"), columnSpan: 3, wrap: true },
+    ],
+  ];
+  return {
+    sheet: "개발자 요약",
+    data: polishTable(rows, 0),
+    columns: [18, 42, 18, 42].map((width) => ({ width })),
+    showGridLines: false,
+    zoomScale: 95,
+    dateFormat: "yyyy-mm-dd hh:mm",
+  };
+}
+
 function buildDeveloperIssueSheet(
   snapshot: ReportSnapshot,
   t: Translate,
@@ -175,7 +422,7 @@ function buildDeveloperIssueSheet(
   for (const entry of actionableLinkEntries(snapshot)) {
     rows.push([
       `LINK-${String(sequence++).padStart(4, "0")}`,
-      entry.severity === "error" ? "높음" : "보통",
+      priorityCell(entry.severity === "error" ? "높음" : "보통"),
       entry.targetUrl,
       entry.sourceUrl,
       categoryLabel(entry.category, t),
@@ -188,7 +435,7 @@ function buildDeveloperIssueSheet(
       entry.responseTimeMs,
       "",
       "",
-      "미처리",
+      pendingCell(),
       "",
       "",
       "",
@@ -200,7 +447,7 @@ function buildDeveloperIssueSheet(
     const issue = entry.issue;
     rows.push([
       `RULE-${String(sequence++).padStart(4, "0")}`,
-      issue.severity === "error" ? "높음" : "보통",
+      priorityCell(issue.severity === "error" ? "높음" : "보통"),
       entry.pageUrl,
       "",
       categoryLabel(issue.category, t),
@@ -213,12 +460,38 @@ function buildDeveloperIssueSheet(
       "",
       issue.wcag ?? "",
       issue.kwcag ?? "",
-      "미처리",
+      pendingCell(),
       "",
       "",
       "",
       "",
     ]);
+  }
+
+  for (const result of snapshot.browserAuditResults ?? []) {
+    for (const issue of result.issues) {
+      rows.push([
+        `BROWSER-${String(sequence++).padStart(4, "0")}`,
+        priorityCell(issue.kind === "navigation-error" ? "높음" : "보통"),
+        result.url,
+        "",
+        categoryLabel("standards", t),
+        `BROWSER-${result.browser.toUpperCase()}`,
+        safeText(issue.message),
+        `${issue.kind} · ${issue.viewport ?? "전체 뷰포트"}`,
+        1,
+        "",
+        "",
+        result.durationMs,
+        "",
+        "",
+        pendingCell(),
+        "",
+        "",
+        "",
+        "",
+      ]);
+    }
   }
 
   if (rows.length === 1) {
@@ -235,14 +508,12 @@ function buildDeveloperIssueSheet(
 
   return {
     sheet: "수정 요청 목록",
-    data: rows,
+    data: polishTable(rows),
     columns: [
       12, 10, 42, 42, 12, 16, 48, 42, 10, 12, 12, 14, 12, 12, 12, 12, 32, 14,
       18,
     ].map((width) => ({ width })),
-    stickyRowsCount: 1,
-    stickyColumnsCount: 3,
-    orientation: "landscape",
+    ...standardTableOptions({ stickyColumnsCount: 3 }),
   };
 }
 
@@ -287,11 +558,9 @@ function buildUrlStatusSheet(
   }
   return {
     sheet: "URL별 현황",
-    data: rows,
+    data: polishTable(rows),
     columns: [55, 12, 14, 14, 10, 10, 12, 12, 22].map((width) => ({ width })),
-    stickyRowsCount: 1,
-    stickyColumnsCount: 1,
-    orientation: "landscape",
+    ...standardTableOptions({ stickyColumnsCount: 1 }),
   };
 }
 
@@ -319,9 +588,9 @@ function buildRuleGuideSheet(
   }
   return {
     sheet: "규칙 설명",
-    data: rows,
+    data: polishTable(rows),
     columns: [18, 14, 12, 64, 14, 14].map((width) => ({ width })),
-    stickyRowsCount: 1,
+    ...standardTableOptions(),
   };
 }
 
@@ -382,13 +651,11 @@ function buildBrowserDetailSheet(
   if (rows.length === 1) rows.push(["", "", "", t("report.status.not-run")]);
   return {
     sheet: "브라우저 호환성 상세",
-    data: rows,
+    data: polishTable(rows),
     columns: [52, 12, 18, 16, 20, 24, 22, 62, 16, 22].map((width) => ({
       width,
     })),
-    stickyRowsCount: 1,
-    stickyColumnsCount: 2,
-    orientation: "landscape",
+    ...standardTableOptions({ stickyColumnsCount: 2 }),
   };
 }
 
@@ -397,6 +664,7 @@ export function buildDeveloperWorkbook(
   t: Translate,
 ): WorkbookSheet[] {
   return [
+    buildDeveloperSummarySheet(snapshot, t),
     buildDeveloperIssueSheet(snapshot, t),
     buildUrlStatusSheet(snapshot, t),
     buildBrowserDetailSheet(snapshot, t),
@@ -529,26 +797,87 @@ function buildManagementSummarySheet(
   const startedAt = snapshot.pageResults.length
     ? Math.min(...snapshot.pageResults.map((page) => page.discoveredAt))
     : Date.now();
+  const totals = issueTotals(snapshot);
+  const totalFindings = totals.errors + totals.warnings;
+  const overallRisk =
+    totals.errors > 0 || snapshot.summary.brokenLinks > 0
+      ? t("report.risk.high")
+      : totals.warnings > 0
+        ? t("report.risk.medium")
+        : t("report.risk.low");
+  const riskColor =
+    overallRisk === t("report.risk.high")
+      ? PALETTE.red
+      : overallRisk === t("report.risk.medium")
+        ? PALETTE.amber
+        : PALETTE.mint;
   const rows: SheetData = [
-    [{ value: t("report.manager.title"), ...HEADER, columnSpan: 4 }],
+    titleRow(t("report.manager.title"), 4),
+    [
+      {
+        value: snapshot.config?.startUrl ?? "점검 대상 URL 없음",
+        columnSpan: 4,
+        textColor: PALETTE.green,
+        fontWeight: "bold",
+        backgroundColor: PALETTE.cream,
+        height: 26,
+      },
+    ],
+    [],
+    [
+      kpiLabel("점검 HTML 페이지"),
+      kpiLabel("전체 탐지 결과"),
+      kpiLabel("오류", "#A53A2A"),
+      kpiLabel("경고", "#B7791F"),
+    ],
+    [
+      kpiValue(checkedPageCount(snapshot), PALETTE.mint),
+      kpiValue(totalFindings, PALETTE.blue),
+      kpiValue(totals.errors, PALETTE.red),
+      kpiValue(totals.warnings, PALETTE.amber),
+    ],
+    [],
+    [{ value: "종합 판정", ...SECTION, columnSpan: 4 }],
+    [
+      {
+        value: overallRisk,
+        columnSpan: 4,
+        fontSize: 18,
+        fontWeight: "bold",
+        align: "center",
+        backgroundColor: riskColor,
+        height: 34,
+      },
+    ],
+    [],
     [{ value: "점검 개요", ...SECTION, columnSpan: 4 }],
     ["기준 URL", snapshot.config?.startUrl ?? ""],
     ["점검 일시", new Date(startedAt)],
     ["점검 방식", t("report.safeScope")],
-    ["점검 URL 수", checkedPageCount(snapshot)],
-    ["오류·경고 수", actionable.length + failedLinks.length],
+    ["조치 항목 수", actionable.length + failedLinks.length],
     ["깨진 링크", snapshot.summary.brokenLinks],
     ["깨진 이미지", snapshot.summary.brokenImages],
     ["리다이렉트", snapshot.summary.redirects],
+    ["브라우저 탐지 결과", browserIssueCount(snapshot)],
     [{ value: "자동점검 범위", ...SECTION, columnSpan: 4 }],
-    [t("report.safeScopeDetail"), ""],
-    [t("report.uncheckedDisclaimer"), ""],
+    [{ value: t("report.safeScopeDetail"), columnSpan: 4, wrap: true }],
+    [
+      {
+        value: t("report.uncheckedDisclaimer"),
+        columnSpan: 4,
+        wrap: true,
+        fontStyle: "italic",
+        textColor: PALETTE.redText,
+      },
+    ],
   ];
   return {
     sheet: "종합 요약",
-    data: rows,
+    data: polishTable(rows, 0),
     columns: [26, 62, 18, 18].map((width) => ({ width })),
     showGridLines: false,
+    zoomScale: 95,
+    dateFormat: "yyyy-mm-dd hh:mm",
   };
 }
 
@@ -566,18 +895,22 @@ function buildCategorySheet(
       (entry) => entry.category === category,
     );
     const error =
-      ruleMatches.filter((entry) => entry.issue.severity === "error").length +
+      ruleMatches
+        .filter((entry) => entry.issue.severity === "error")
+        .reduce((count, entry) => count + (entry.issue.count ?? 1), 0) +
       linkMatches.filter((entry) => entry.severity === "error").length;
     const warning =
-      ruleMatches.filter((entry) => entry.issue.severity === "warning").length +
+      ruleMatches
+        .filter((entry) => entry.issue.severity === "warning")
+        .reduce((count, entry) => count + (entry.issue.count ?? 1), 0) +
       linkMatches.filter((entry) => entry.severity === "warning").length;
     rows.push([categoryLabel(category, t), error, warning, error + warning]);
   }
   return {
     sheet: "분류별 현황",
-    data: rows,
+    data: polishTable(rows),
     columns: [22, 14, 14, 14].map((width) => ({ width })),
-    stickyRowsCount: 1,
+    ...standardTableOptions(),
   };
 }
 
@@ -618,9 +951,9 @@ function buildTopIssuesSheet(
   );
   return {
     sheet: "주요 이슈 TOP 10",
-    data: rows,
+    data: polishTable(rows),
     columns: [10, 18, 14, 68, 12].map((width) => ({ width })),
-    stickyRowsCount: 1,
+    ...standardTableOptions(),
   };
 }
 
@@ -641,6 +974,12 @@ function buildUrlRiskSheet(
     if (entry.severity === "error") current.errors += 1;
     else current.warnings += 1;
     risk.set(entry.targetUrl, current);
+  }
+  for (const result of snapshot.browserAuditResults ?? []) {
+    if (result.issues.length === 0) continue;
+    const current = risk.get(result.url) ?? { errors: 0, warnings: 0 };
+    current.warnings += result.issues.length;
+    risk.set(result.url, current);
   }
   const ranked = [...risk.entries()]
     .map(([url, value]) => ({
@@ -668,10 +1007,9 @@ function buildUrlRiskSheet(
   );
   return {
     sheet: "URL 위험 순위",
-    data: rows,
+    data: polishTable(rows),
     columns: [10, 64, 10, 10, 12, 12].map((width) => ({ width })),
-    stickyRowsCount: 1,
-    stickyColumnsCount: 2,
+    ...standardTableOptions({ stickyColumnsCount: 2 }),
   };
 }
 
@@ -704,13 +1042,24 @@ function buildEvidenceSheet(
       entry.issue.count ?? 1,
     ]);
   }
+  for (const result of snapshot.browserAuditResults ?? []) {
+    for (const issue of result.issues) {
+      rows.push([
+        result.url,
+        categoryLabel("standards", t),
+        `BROWSER-${result.browser.toUpperCase()}`,
+        severityLabel("warning", t),
+        safeText(issue.message),
+        issue.viewport ?? "전체 뷰포트",
+        1,
+      ]);
+    }
+  }
   return {
     sheet: "상세 근거",
-    data: rows,
+    data: polishTable(rows),
     columns: [58, 14, 18, 14, 68, 48, 10].map((width) => ({ width })),
-    stickyRowsCount: 1,
-    stickyColumnsCount: 1,
-    orientation: "landscape",
+    ...standardTableOptions({ stickyColumnsCount: 1 }),
   };
 }
 
@@ -722,10 +1071,9 @@ export function buildManagerWorkbook(
     buildManagementSummarySheet(snapshot, t),
     {
       sheet: "호환성 점검",
-      data: compatibilityRows(snapshot, t),
+      data: polishTable(compatibilityRows(snapshot, t)),
       columns: [24, 34, 14, 72].map((width) => ({ width })),
-      stickyRowsCount: 1,
-      orientation: "landscape",
+      ...standardTableOptions(),
     },
     buildCategorySheet(snapshot, t),
     buildTopIssuesSheet(snapshot, t),

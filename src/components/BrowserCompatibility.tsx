@@ -8,6 +8,7 @@ import {
   runBrowserAudit,
   type BrowserRunnerHealth,
 } from "../lib/browserAudit";
+import { estimateBrowserAuditProgress } from "../lib/browserAuditProgress";
 
 const BROWSERS: BrowserName[] = ["chrome", "edge", "whale"];
 
@@ -37,6 +38,7 @@ export function BrowserCompatibility() {
   const [healthState, setHealthState] = useState<
     "checking" | "ready" | "unavailable"
   >("checking");
+  const [elapsedMs, setElapsedMs] = useState(0);
 
   const loadHealth = useCallback(async () => {
     try {
@@ -54,6 +56,18 @@ export function BrowserCompatibility() {
     return () => globalThis.clearTimeout(timeout);
   }, [auditStatus, crawlStatus, loadHealth]);
 
+  useEffect(() => {
+    if (auditStatus !== "running") return;
+    const startedAt = Date.now();
+    const updateElapsed = () => setElapsedMs(Date.now() - startedAt);
+    const timeout = globalThis.setTimeout(updateElapsed, 0);
+    const interval = globalThis.setInterval(updateElapsed, 1_000);
+    return () => {
+      globalThis.clearTimeout(timeout);
+      globalThis.clearInterval(interval);
+    };
+  }, [auditStatus]);
+
   const refreshHealth = useCallback(() => {
     setHealthState("checking");
     void loadHealth();
@@ -63,7 +77,10 @@ export function BrowserCompatibility() {
     const urls = pageResults
       .filter(
         (page) =>
-          !page.blockedByRobots && page.status >= 200 && page.status < 400,
+          page.hasBody &&
+          !page.blockedByRobots &&
+          page.status >= 200 &&
+          page.status < 400,
       )
       .map((page) => page.url);
     const store = useCrawlerStore.getState();
@@ -77,6 +94,20 @@ export function BrowserCompatibility() {
     store.setBrowserAuditStatus(audit.available ? "done" : "unavailable");
     await loadHealth();
   }, [loadHealth, pageResults]);
+
+  const estimate = estimateBrowserAuditProgress(
+    progress.completed,
+    progress.total,
+    elapsedMs,
+    auditStatus === "running",
+  );
+  const formatDuration = (seconds: number) => {
+    if (seconds < 60) return t("browser.duration.seconds", { count: seconds });
+    return t("browser.duration.minutesSeconds", {
+      minutes: Math.floor(seconds / 60),
+      seconds: seconds % 60,
+    });
+  };
 
   if (crawlStatus === "idle" || auditStatus === "idle") return null;
 
@@ -133,6 +164,54 @@ export function BrowserCompatibility() {
         </div>
       </div>
 
+      {auditStatus === "running" && (
+        <div
+          className="mb-4 rounded-md border border-primary/25 bg-primary/5 p-3"
+          aria-live="polite"
+        >
+          <div className="mb-2 flex items-center justify-between gap-3 text-sm">
+            <span className="font-semibold text-foreground">
+              {progress.total > 0
+                ? t("browser.estimate.title")
+                : t("browser.estimate.preparing")}
+            </span>
+            <span className="font-bold tabular-nums text-primary">
+              {estimate.percent}%
+            </span>
+          </div>
+          <div
+            className="h-3 w-full overflow-hidden rounded-full bg-secondary"
+            role="progressbar"
+            aria-label={t("browser.estimate.title")}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={estimate.percent}
+          >
+            <div
+              className="h-full rounded-full bg-primary transition-[width] duration-700 ease-out"
+              style={{ width: `${estimate.percent}%` }}
+            />
+          </div>
+          <div className="mt-2 flex flex-wrap justify-between gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            <span>
+              {t("browser.estimate.elapsed", {
+                time: formatDuration(estimate.elapsedSeconds),
+              })}
+            </span>
+            <span>
+              {progress.total > 0
+                ? t("browser.estimate.remaining", {
+                    time: formatDuration(estimate.remainingSeconds),
+                  })
+                : t("browser.estimate.waiting")}
+            </span>
+          </div>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            {t("browser.estimate.notice")}
+          </p>
+        </div>
+      )}
+
       <div className="overflow-hidden rounded-md border border-border">
         <table className="w-full table-fixed border-collapse text-sm">
           <thead>
@@ -163,6 +242,23 @@ export function BrowserCompatibility() {
               const version = matches.find(
                 (result) => result.browserVersion,
               )?.browserVersion;
+              const runtimeLabel = version
+                ? version
+                : healthState === "checking"
+                  ? t("browser.checking")
+                  : healthState === "unavailable" || !capability
+                    ? t("report.status.unavailable")
+                    : capability.installed
+                      ? t("browser.installed")
+                      : t("browser.notInstalled");
+              const functionalLabel =
+                auditStatus === "running" && matches.length === 0
+                  ? t("browser.checking")
+                  : t(`report.status.${functional}`);
+              const visualLabel =
+                auditStatus === "running" && matches.length === 0
+                  ? t("browser.checking")
+                  : t(`report.status.${visual}`);
               return (
                 <tr
                   key={browser}
@@ -172,15 +268,10 @@ export function BrowserCompatibility() {
                     {browser}
                   </td>
                   <td className="px-3 py-2 text-xs text-muted-foreground">
-                    {version ??
-                      (capability?.installed
-                        ? t("browser.installed")
-                        : t("browser.notInstalled"))}
+                    {runtimeLabel}
                   </td>
-                  <td className="px-3 py-2">
-                    {t(`report.status.${functional}`)}
-                  </td>
-                  <td className="px-3 py-2">{t(`report.status.${visual}`)}</td>
+                  <td className="px-3 py-2">{functionalLabel}</td>
+                  <td className="px-3 py-2">{visualLabel}</td>
                   <td className="px-3 py-2 text-right tabular-nums">
                     {issueCount}
                   </td>

@@ -11,6 +11,8 @@ node_modules
 dist
 dist-ssr
 *.local
+.dev.vars
+.dev.vars.*
 browser-runner/.env
 browser-runner/runner-token
 

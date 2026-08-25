@@ -62,6 +62,7 @@ describe("Excel report workbooks", () => {
     expect(
       buildDeveloperWorkbook(snapshot(), t).map((sheet) => sheet.sheet),
     ).toEqual([
+      "개발자 요약",
       "수정 요청 목록",
       "URL별 현황",
       "브라우저 호환성 상세",
@@ -124,9 +125,67 @@ describe("Excel report workbooks", () => {
     expect(text).toContain("report.status.fail");
   });
 
+  it("adds browser findings to the developer action list", () => {
+    const data = snapshot();
+    data.browserAuditResults = [
+      {
+        url: "https://example.com",
+        browser: "whale",
+        browserVersion: "150.0",
+        functionalStatus: "pass",
+        visualStatus: "fail",
+        issues: [
+          {
+            kind: "horizontal-overflow",
+            viewport: "mobile",
+            message: "Document exceeds viewport by 12px",
+          },
+        ],
+        viewports: [],
+        durationMs: 100,
+        checkedAt: Date.UTC(2026, 7, 25),
+      },
+    ];
+    const actions = buildDeveloperWorkbook(data, t).find(
+      (sheet) => sheet.sheet === "수정 요청 목록",
+    );
+    const text = JSON.stringify(actions?.data);
+    expect(text).toContain("BROWSER-WHALE");
+    expect(text).toContain("horizontal-overflow");
+    expect(text).toContain("mobile");
+  });
+
+  it("applies presentation styles and dashboard sheets", () => {
+    const developer = buildDeveloperWorkbook(snapshot(), t);
+    const manager = buildManagerWorkbook(snapshot(), t);
+    expect(developer[0]?.showGridLines).toBe(false);
+    expect(developer[0]?.data[0]?.[0]).toMatchObject({
+      value: "개발자 조치 보고서",
+      columnSpan: 4,
+      fontSize: 20,
+    });
+    expect(manager[0]?.data[0]?.[0]).toMatchObject({
+      value: "report.manager.title",
+      columnSpan: 4,
+      fontSize: 20,
+    });
+    expect(manager[1]?.stickyRowsCount).toBe(1);
+    expect(manager[1]?.showGridLines).toBe(false);
+  });
+
   it("serializes the management workbook as a real xlsx zip", async () => {
     const { default: writeExcelFile } = await import("write-excel-file/node");
     const buffer = await writeExcelFile(buildManagerWorkbook(snapshot(), t), {
+      fontFamily: "Arial",
+      fontSize: 10,
+    }).toBuffer();
+    expect(buffer.subarray(0, 2).toString("ascii")).toBe("PK");
+    expect(buffer.length).toBeGreaterThan(1_000);
+  });
+
+  it("serializes the developer workbook as a real xlsx zip", async () => {
+    const { default: writeExcelFile } = await import("write-excel-file/node");
+    const buffer = await writeExcelFile(buildDeveloperWorkbook(snapshot(), t), {
       fontFamily: "Arial",
       fontSize: 10,
     }).toBuffer();

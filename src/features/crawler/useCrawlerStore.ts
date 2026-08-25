@@ -8,6 +8,7 @@ import type {
   CrawlSummary,
   LinkResult,
   PageResult,
+  ResourceType,
 } from "../../types";
 import {
   createEmptySiteIndex,
@@ -18,6 +19,7 @@ import { createCookieJar, type CookieJar } from "../../lib/cookieJar";
 
 export interface RuleIssueEntry {
   pageUrl: string;
+  resourceType?: ResourceType;
   issue: Issue;
 }
 
@@ -42,7 +44,11 @@ interface CrawlerState {
   setConfig: (config: CrawlConfig) => void;
   addPageResult: (result: PageResult) => void;
   addLinkResult: (result: LinkResult) => void;
-  addRuleIssues: (pageUrl: string, issues: Issue[]) => void;
+  addRuleIssues: (
+    pageUrl: string,
+    issues: Issue[],
+    resourceType?: ResourceType,
+  ) => void;
   setBrowserAuditStatus: (status: BrowserAuditRunStatus) => void;
   setBrowserAuditProgress: (progress: BrowserAuditProgress) => void;
   setBrowserAuditResults: (results: BrowserAuditResult[]) => void;
@@ -103,12 +109,12 @@ export const useCrawlerStore = create<CrawlerState>((set, get) => ({
       return { linkResults, summary };
     }),
 
-  addRuleIssues: (pageUrl, issues) => {
+  addRuleIssues: (pageUrl, issues, resourceType = "page") => {
     if (issues.length === 0) return;
     set((state) => {
       const ruleIssues = [
         ...state.ruleIssues,
-        ...issues.map((issue) => ({ pageUrl, issue })),
+        ...issues.map((issue) => ({ pageUrl, resourceType, issue })),
       ];
       const summary = { ...state.summary };
       for (const issue of issues) {

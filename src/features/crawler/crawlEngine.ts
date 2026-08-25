@@ -44,6 +44,24 @@ const SSO_FAILED_ISSUE = "SSO 자동 추적 실패";
 const SSO_FAILED_SUFFIX = "— IP 바인딩 세션 또는 미지원 인증 흐름으로 추정";
 const SSO_SKIPPED_ISSUE = "자격증명 입력 폼 감지 — 자동 추적 안 함 (보안 정책)";
 
+export function hasExplicitBody(html: string): boolean {
+  return /<body(?:\s|>)/i.test(html);
+}
+
+export function resourceTypeFromResponse(
+  contentType: string | null,
+  fallback: ResourceType,
+  htmlHasBody: boolean,
+): ResourceType {
+  const mime = (contentType ?? "").toLowerCase();
+  if (mime.includes("text/html")) return htmlHasBody ? "page" : "other";
+  if (mime.includes("text/css")) return "css";
+  if (mime.includes("javascript") || mime.includes("ecmascript")) return "js";
+  if (mime.startsWith("image/")) return "image";
+  if (mime.includes("application/pdf")) return "pdf";
+  return fallback;
+}
+
 function buildLinkResult(
   sourceUrl: string,
   targetUrl: string,
@@ -163,6 +181,23 @@ export async function runCrawl(config: CrawlConfig): Promise<void> {
     );
   }
 
+  async function analyzeCssResource(
+    url: string,
+    result: ProxyResponse,
+  ): Promise<void> {
+    if (
+      result.status < 200 ||
+      result.status >= 300 ||
+      typeof result.bodyText !== "string"
+    )
+      return;
+    const issues = analyzeCssCompatibility(result.bodyText);
+    if (config.w3cValidation && !result.bodyTruncated) {
+      issues.push(...(await validateW3c("css", result.bodyText)));
+    }
+    store.addRuleIssues(url, issues, "css");
+  }
+
   async function handlePage(item: QueueItem): Promise<void> {
     const blockedByRobots =
       !config.manualOnly &&
@@ -172,6 +207,7 @@ export async function runCrawl(config: CrawlConfig): Promise<void> {
     if (blockedByRobots) {
       store.addPageResult({
         url: item.url,
+        hasBody: false,
         depth: item.depth,
         status: 0,
         redirectChain: [],
@@ -235,31 +271,53 @@ export async function runCrawl(config: CrawlConfig): Promise<void> {
       }
     }
 
-    store.addPageResult({
-      url: item.url,
-      depth: item.depth,
-      status: result.status,
-      errorType: result.errorType,
-      redirectChain: result.redirectChain,
-      isRedirectLoop: result.isRedirectLoop,
-      responseTimeMs: result.responseTimeMs,
-      requiresAuth,
-      blockedByRobots: false,
-      discoveredAt: Date.now(),
-      ssoOutcome: ssoOutcome?.kind,
-      ssoHops:
-        ssoOutcome && ssoOutcome.kind !== "skipped-credentials"
-          ? ssoOutcome.hops
-          : undefined,
-      ssoCookieDomains:
-        ssoOutcome?.kind === "resolved" ? ssoOutcome.cookieDomains : undefined,
-    });
+    const htmlHasBody = Boolean(
+      isHtml &&
+      isSuccessful &&
+      result.bodyText &&
+      hasExplicitBody(result.bodyText),
+    );
+    const actualResourceType = isSuccessful
+      ? resourceTypeFromResponse(
+          result.contentType,
+          item.resourceType,
+          htmlHasBody,
+        )
+      : item.resourceType;
+
+    // Successful assets discovered through an anchor/manual URL are not pages.
+    // Keep failed page attempts for broken-link reporting, but only successful
+    // HTML documents with an explicit <body> belong in pageResults.
+    if (htmlHasBody || !isSuccessful) {
+      store.addPageResult({
+        url: item.url,
+        hasBody: htmlHasBody,
+        depth: item.depth,
+        status: result.status,
+        errorType: result.errorType,
+        redirectChain: result.redirectChain,
+        isRedirectLoop: result.isRedirectLoop,
+        responseTimeMs: result.responseTimeMs,
+        requiresAuth,
+        blockedByRobots: false,
+        discoveredAt: Date.now(),
+        ssoOutcome: ssoOutcome?.kind,
+        ssoHops:
+          ssoOutcome && ssoOutcome.kind !== "skipped-credentials"
+            ? ssoOutcome.hops
+            : undefined,
+        ssoCookieDomains:
+          ssoOutcome?.kind === "resolved"
+            ? ssoOutcome.cookieDomains
+            : undefined,
+      });
+    }
 
     store.addLinkResult(
       buildLinkResult(
         item.sourceUrl ?? "",
         item.url,
-        "page",
+        actualResourceType,
         result,
         classification,
         isExternal(item.url),
@@ -271,7 +329,7 @@ export async function runCrawl(config: CrawlConfig): Promise<void> {
     const skipChildren =
       config.manualOnly || (requiresAuth && config.excludeAuthPages);
 
-    if (isHtml && isSuccessful && result.bodyText) {
+    if (htmlHasBody && result.bodyText) {
       if (!skipChildren) {
         for (const link of extractLinks(result.bodyText, result.finalUrl)) {
           tryEnqueue({
@@ -313,6 +371,8 @@ export async function runCrawl(config: CrawlConfig): Promise<void> {
         getTitleText(ruleDoc),
         getMetaDescription(ruleDoc),
       );
+    } else if (actualResourceType === "css") {
+      await analyzeCssResource(item.url, result);
     }
   }
 
@@ -340,18 +400,7 @@ export async function runCrawl(config: CrawlConfig): Promise<void> {
       );
     }
 
-    const isCss =
-      item.resourceType === "css" &&
-      result.status >= 200 &&
-      result.status < 300 &&
-      typeof result.bodyText === "string";
-    if (isCss && result.bodyText !== undefined) {
-      const issues = analyzeCssCompatibility(result.bodyText);
-      if (config.w3cValidation && !result.bodyTruncated) {
-        issues.push(...(await validateW3c("css", result.bodyText)));
-      }
-      store.addRuleIssues(item.url, issues);
-    }
+    if (item.resourceType === "css") await analyzeCssResource(item.url, result);
   }
 
   async function worker(): Promise<void> {
@@ -392,7 +441,10 @@ export async function runCrawl(config: CrawlConfig): Promise<void> {
       .getState()
       .pageResults.filter(
         (page) =>
-          !page.blockedByRobots && page.status >= 200 && page.status < 400,
+          page.hasBody &&
+          !page.blockedByRobots &&
+          page.status >= 200 &&
+          page.status < 400,
       )
       .map((page) => page.url);
     store.setBrowserAuditProgress({ completed: 0, total: pageUrls.length });

@@ -373,12 +373,23 @@ export async function runAudit({ urls, browsers, viewports }) {
       );
     }
     let browser;
+    let browserServer;
     try {
-      browser = await chromium.launch({
+      const launchOptions = {
         executablePath,
         headless: true,
         args: ["--disable-background-networking", "--disable-sync"],
-      });
+      };
+      // Whale does not acknowledge Playwright's graceful Browser.close command
+      // and waits for Playwright's 30-second forced-close timeout. Running it as
+      // a BrowserServer lets us terminate the isolated child immediately after
+      // all read-only checks have completed.
+      if (browserName === "whale") {
+        browserServer = await chromium.launchServer(launchOptions);
+        browser = await chromium.connect(browserServer.wsEndpoint());
+      } else {
+        browser = await chromium.launch(launchOptions);
+      }
       const version = browser.version();
       for (const url of urls) {
         try {
@@ -406,7 +417,11 @@ export async function runAudit({ urls, browsers, viewports }) {
         ),
       );
     } finally {
-      await browser?.close().catch(() => undefined);
+      if (browserServer) {
+        await browserServer.kill().catch(() => undefined);
+      } else {
+        await browser?.close().catch(() => undefined);
+      }
     }
     return results;
   }

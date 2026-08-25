@@ -103,6 +103,8 @@ export type SsoOutcomeKind = "resolved" | "failed" | "skipped-credentials";
 
 export interface PageResult {
   url: string;
+  /** True only when a successful HTML response contains an explicit <body> element. */
+  hasBody?: boolean;
   depth: number;
   status: number;
   errorType?: ProxyErrorType;

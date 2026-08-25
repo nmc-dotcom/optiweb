@@ -8,6 +8,8 @@ import type { IssueCategory, IssueSeverity, ResourceType } from "../types";
 
 type FilterKey =
   | "all"
+  | "page"
+  | "css"
   | "broken"
   | "redirect"
   | "image"
@@ -17,7 +19,8 @@ type FilterKey =
   | "a11y"
   | "standards";
 const FILTERS: FilterKey[] = [
-  "all",
+  "page",
+  "css",
   "broken",
   "redirect",
   "image",
@@ -26,6 +29,7 @@ const FILTERS: FilterKey[] = [
   "seo",
   "a11y",
   "standards",
+  "all",
 ];
 
 type SeverityFilter = "all" | IssueSeverity;
@@ -57,6 +61,10 @@ function matchesFilter(row: UnifiedRow, filter: FilterKey): boolean {
   switch (filter) {
     case "all":
       return true;
+    case "page":
+      return row.resourceType === "page";
+    case "css":
+      return row.resourceType === "css";
     case "broken":
       return row.isBroken;
     case "redirect":
@@ -87,7 +95,7 @@ export function ResultsTable() {
   const linkResults = useCrawlerStore((s) => s.linkResults);
   const ruleIssues = useCrawlerStore((s) => s.ruleIssues);
   const browserAuditResults = useCrawlerStore((s) => s.browserAuditResults);
-  const [filter, setFilter] = useState<FilterKey>("all");
+  const [filter, setFilter] = useState<FilterKey>("page");
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("all");
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("status");
@@ -122,7 +130,7 @@ export function ResultsTable() {
       severity: entry.issue.severity,
       isBroken: false,
       isExternal: false,
-      resourceType: "page",
+      resourceType: entry.resourceType ?? "page",
       redirectCount: 0,
       responseTimeMs: null,
     }));
