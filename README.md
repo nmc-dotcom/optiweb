@@ -9,11 +9,88 @@ spreadsheet, then optionally enable "manual list only" to verify exactly those a
 without expanding discovered links. Results include a lightweight in-app link graph that
 visualizes page-to-page relationships from the crawl output.
 
-> **Status: Phase 3 (SSO session bootstrap auto-follow).** Phase 1 (crawl engine, proxy),
-> Phase 1.5 (JS/SSO redirect detection), and Phase 2 (SEO/A11y/Standards rule engines) are
-> done. This pass adds an opt-in auto-follow of the specific "anonymous SSO session
-> bootstrap" pattern Phase 1.5 could only warn about. The Cytoscape link graph, orphan-page
-> detection, and CSV/JSON/Markdown export are **not yet built** — see "What's next" below.
+> **Status:** crawling, manual URL imports, SEO/A11y/standards rules, guarded SSO
+> bootstrap following, link visualization, Excel reports, and optional read-only browser
+> compatibility checks are implemented.
+
+## Installation
+
+### Requirements
+
+- Git
+- Node.js 22 or newer (required by the included Wrangler version)
+- npm
+- Docker with the Compose plugin only when using the optional browser runner
+
+### Install and run the complete local app
+
+```bash
+git clone https://github.com/nmc-dotcom/optiweb.git
+cd optiweb
+npm ci
+cp .dev.vars.example .dev.vars
+npm run pages:dev
+```
+
+Open <http://127.0.0.1:8788/>. `pages:dev` builds the Vite client and serves both the
+static app and Pages Functions through the local Wrangler runtime. Cloudflare login is
+not required for this local-only command.
+
+The two browser-runner variables in `.dev.vars` are optional. Without them, crawling,
+rule checks, and report exports still work; browser compatibility is shown as unavailable.
+Never commit `.dev.vars`, `browser-runner/.env`, or `browser-runner/runner-token`.
+
+### Verify an installation
+
+```bash
+npm test
+npm run lint
+npm run build
+```
+
+### Frontend development with hot reload
+
+Run the Pages Functions proxy and Vite in separate terminals:
+
+```bash
+# Terminal 1 — build and serve Pages Functions on port 8788
+npm run build
+npx wrangler pages dev dist --port 8788
+
+# Terminal 2 — Vite development server (proxies /api/* to port 8788)
+npm run dev
+```
+
+Use the Vite URL printed in Terminal 2, normally <http://127.0.0.1:5173/>.
+
+### Optional browser compatibility runner
+
+The runner is isolated in its own hardened container and binds to localhost port 8790 by
+default:
+
+```bash
+cd browser-runner
+cp .env.example .env
+openssl rand -hex 32 > runner-token
+sudo chown 1001:1001 runner-token
+sudo chmod 600 runner-token
+docker compose up -d --build
+docker compose ps
+```
+
+Set `BROWSER_RUNNER_URL` in the main app's `.dev.vars` to a URL reachable from its Pages
+runtime, and set `BROWSER_RUNNER_TOKEN` to the same value stored in `runner-token`. See
+[`browser-runner/README.md`](browser-runner/README.md) for browser paths, diagnostics,
+network isolation, and deployment guidance.
+
+### Updating an existing checkout
+
+```bash
+git pull --ff-only
+npm ci
+npm test
+npm run build
+```
 
 ## Why the crawler lives in the browser, not the Function
 
@@ -229,26 +306,7 @@ boundary. A hardened Docker Compose deployment is included; it installs Edge and
 Whale inside the container instead of changing browsers on the host, and binds the
 runner to `127.0.0.1` by default.
 
-## Local development
-
-```bash
-npm install
-
-# Terminal 1: the Pages Function (proxy), served on :8788
-npm run build && npx wrangler pages dev dist --port 8788
-
-# Terminal 2: Vite dev server — proxies /api/* to :8788 (see vite.config.ts)
-npm run dev
-```
-
-Or build once and serve the whole app (including the Function) through Wrangler:
-
-```bash
-npm run pages:dev
-```
-
 ## What's next (not in this phase)
 
-- Cytoscape.js link graph, orphan-page detection via sitemap.xml
-- CSV / JSON / Markdown export
+- Sitemap-based orphan-page detection
 - PWA (manifest, service worker, offline result history)

@@ -13,6 +13,7 @@ dist-ssr
 *.local
 .dev.vars
 .dev.vars.*
+!.dev.vars.example
 browser-runner/.env
 browser-runner/runner-token
 

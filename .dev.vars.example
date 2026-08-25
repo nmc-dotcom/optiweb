@@ -1,0 +1,6 @@
+# Optional: required only for automated Chrome, Edge, and Whale checks.
+# The main crawler, rules, and report exports work without these values.
+BROWSER_RUNNER_URL=http://127.0.0.1:8790
+
+# Must match the token configured by browser-runner/runner-token.
+BROWSER_RUNNER_TOKEN=replace-with-a-random-token
