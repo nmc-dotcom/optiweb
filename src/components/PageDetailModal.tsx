@@ -11,10 +11,16 @@ export function PageDetailModal({ pageUrl, onClose }: PageDetailModalProps) {
   const { t } = useI18n();
   const ruleIssues = useCrawlerStore((s) => s.ruleIssues);
   const pageResults = useCrawlerStore((s) => s.pageResults);
+  const browserAuditResults = useCrawlerStore((s) => s.browserAuditResults);
   const issues = ruleIssues
     .filter((entry) => entry.pageUrl === pageUrl)
     .map((entry) => entry.issue);
   const pageResult = pageResults.find((p) => p.url === pageUrl);
+  const browserFindings = browserAuditResults
+    .filter((result) => result.url === pageUrl)
+    .flatMap((result) =>
+      result.issues.map((issue) => ({ browser: result.browser, issue })),
+    );
 
   return (
     <div
@@ -80,7 +86,9 @@ export function PageDetailModal({ pageUrl, onClose }: PageDetailModalProps) {
         )}
 
         {issues.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{t("detail.empty")}</p>
+          browserFindings.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{t("detail.empty")}</p>
+          ) : null
         ) : (
           <ul className="max-h-[60vh] space-y-3 overflow-y-auto">
             {issues.map((issue, index) => (
@@ -124,6 +132,42 @@ export function PageDetailModal({ pageUrl, onClose }: PageDetailModalProps) {
               </li>
             ))}
           </ul>
+        )}
+
+        {browserFindings.length > 0 && (
+          <div className={issues.length > 0 ? "mt-4" : ""}>
+            <h3 className="mb-2 text-sm font-bold text-foreground">
+              {t("detail.browser.title")}
+            </h3>
+            <ul className="max-h-[40vh] space-y-2 overflow-y-auto">
+              {browserFindings.map(({ browser, issue }, index) => (
+                <li
+                  key={`${browser}-${issue.kind}-${index}`}
+                  className="rounded-md border border-border p-3 text-sm"
+                >
+                  <div className="mb-1 flex flex-wrap gap-2 text-xs">
+                    <span className="rounded-full bg-secondary px-2 py-0.5 font-semibold uppercase">
+                      {browser}
+                    </span>
+                    <span className="rounded-full bg-secondary px-2 py-0.5">
+                      {issue.kind}
+                    </span>
+                    {issue.viewport && (
+                      <span className="text-muted-foreground">
+                        {issue.viewport}
+                      </span>
+                    )}
+                  </div>
+                  <p>{issue.message}</p>
+                  {issue.url && (
+                    <p className="mt-1 break-all text-xs text-muted-foreground">
+                      {issue.url}
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
       </div>
     </div>

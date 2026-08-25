@@ -9,7 +9,7 @@ import { fetchProxy } from "../../lib/fetchProxy";
 import { normalizeUrl, isSameDomain } from "../../lib/url";
 import {
   fetchRobotsRules,
-  isPathAllowed,
+  isUrlAllowed,
   type RobotsRules,
 } from "../../lib/robotsTxt";
 import { classify, type StatusClassification } from "../checker/classifyStatus";
@@ -27,6 +27,10 @@ import {
 } from "../rules/seo";
 import type { RuleContext } from "../rules/types";
 import { followSsoSession, type SsoOutcome } from "./ssoFollow";
+import { analyzeCssCompatibility } from "../rules/standards/cssCompatibility";
+import { validateW3c } from "../../lib/w3cValidator";
+import { isSafeReadOnlyUrl } from "../../lib/safeNavigation";
+import { runBrowserAudit } from "../../lib/browserAudit";
 
 let idCounter = 0;
 function nextLinkId(): string {
@@ -95,6 +99,9 @@ function buildLinkResult(
  * here so Cloudflare's free-tier CPU-per-invocation limit is never hit.
  */
 export async function runCrawl(config: CrawlConfig): Promise<void> {
+  // Enforce the safety boundary at the engine as well as in the form. This prevents
+  // another caller from enabling cross-domain discovery or form-based SSO submission.
+  config = { ...config, sameDomainOnly: true, ssoAutoFollow: false };
   const store = useCrawlerStore.getState();
   store.reset();
   store.setConfig(config);
@@ -105,9 +112,10 @@ export async function runCrawl(config: CrawlConfig): Promise<void> {
   const isExternal = (url: string) =>
     !isSameDomain(url, startHostname, config.includeSubdomains);
 
-  const robotsRules: RobotsRules = config.respectRobotsTxt
-    ? await fetchRobotsRules(startOrigin, config.timeoutMs)
-    : { rules: [] };
+  const robotsRules: RobotsRules =
+    config.respectRobotsTxt && !config.manualOnly
+      ? await fetchRobotsRules(startOrigin, config.timeoutMs)
+      : { rules: [] };
 
   const visited = new Set<string>();
   const queue: QueueItem[] = [];
@@ -115,7 +123,7 @@ export async function runCrawl(config: CrawlConfig): Promise<void> {
   let processedCount = 0;
   let activeWorkers = 0;
 
-  function tryEnqueue(item: QueueItem): void {
+  function tryEnqueue(item: QueueItem, explicitlyRegistered = false): void {
     let normalized: string;
     try {
       normalized = normalizeUrl(item.url);
@@ -124,9 +132,14 @@ export async function runCrawl(config: CrawlConfig): Promise<void> {
     }
     if (visited.has(normalized)) return;
 
+    // Only user-registered URLs may cross the registered domain boundary.
+    if (!explicitlyRegistered && isExternal(item.url)) return;
+
     if (item.resourceType === "page") {
+      if (!isSafeReadOnlyUrl(item.url)) return;
       if (item.depth > config.maxDepth) return;
-      if (config.sameDomainOnly && isExternal(item.url)) return;
+      // Discovered pages are always same-domain. Cross-domain pages are only allowed
+      // when the user explicitly registered them as a start/manual URL.
       if (pageCount >= config.maxPages) return;
       pageCount += 1;
     }
@@ -135,17 +148,26 @@ export async function runCrawl(config: CrawlConfig): Promise<void> {
     queue.push(item);
   }
 
-  tryEnqueue({
-    url: config.startUrl,
-    sourceUrl: null,
-    depth: 0,
-    resourceType: "page",
-  });
+  const seedUrls = config.manualOnly
+    ? config.manualUrls
+    : [config.startUrl, ...config.manualUrls];
+  for (const url of seedUrls) {
+    tryEnqueue(
+      {
+        url,
+        sourceUrl: null,
+        depth: 0,
+        resourceType: "page",
+      },
+      true,
+    );
+  }
 
   async function handlePage(item: QueueItem): Promise<void> {
     const blockedByRobots =
+      !config.manualOnly &&
       config.respectRobotsTxt &&
-      !isPathAllowed(new URL(item.url).pathname, robotsRules);
+      !isUrlAllowed(item.url, robotsRules);
 
     if (blockedByRobots) {
       store.addPageResult({
@@ -246,7 +268,8 @@ export async function runCrawl(config: CrawlConfig): Promise<void> {
       ),
     );
 
-    const skipChildren = requiresAuth && config.excludeAuthPages;
+    const skipChildren =
+      config.manualOnly || (requiresAuth && config.excludeAuthPages);
 
     if (isHtml && isSuccessful && result.bodyText) {
       if (!skipChildren) {
@@ -279,6 +302,11 @@ export async function runCrawl(config: CrawlConfig): Promise<void> {
         siteIndex: useCrawlerStore.getState().siteIndex,
       };
       const issues = await runRules(ruleContext);
+      if (config.w3cValidation && !result.bodyTruncated) {
+        issues.push(
+          ...(await validateW3c("html", result.bodyText, result.finalUrl)),
+        );
+      }
       store.addRuleIssues(item.url, issues);
       store.updateSiteIndex(
         item.url,
@@ -310,6 +338,19 @@ export async function runCrawl(config: CrawlConfig): Promise<void> {
           isExternal(item.url),
         ),
       );
+    }
+
+    const isCss =
+      item.resourceType === "css" &&
+      result.status >= 200 &&
+      result.status < 300 &&
+      typeof result.bodyText === "string";
+    if (isCss && result.bodyText !== undefined) {
+      const issues = analyzeCssCompatibility(result.bodyText);
+      if (config.w3cValidation && !result.bodyTruncated) {
+        issues.push(...(await validateW3c("css", result.bodyText)));
+      }
+      store.addRuleIssues(item.url, issues);
     }
   }
 
@@ -343,6 +384,25 @@ export async function runCrawl(config: CrawlConfig): Promise<void> {
   // see the comment on runDuplicateRules in features/rules/seo/duplicates.ts.
   for (const entry of runDuplicateRules(useCrawlerStore.getState().siteIndex)) {
     store.addRuleIssues(entry.pageUrl, [entry.issue]);
+  }
+
+  if (config.browserCompatibility) {
+    store.setBrowserAuditStatus("running");
+    const pageUrls = useCrawlerStore
+      .getState()
+      .pageResults.filter(
+        (page) =>
+          !page.blockedByRobots && page.status >= 200 && page.status < 400,
+      )
+      .map((page) => page.url);
+    store.setBrowserAuditProgress({ completed: 0, total: pageUrls.length });
+    const browserAudit = await runBrowserAudit(pageUrls, 300_000, (progress) =>
+      store.setBrowserAuditProgress(progress),
+    );
+    store.setBrowserAuditResults(browserAudit.results);
+    store.setBrowserAuditStatus(
+      browserAudit.available ? "done" : "unavailable",
+    );
   }
 
   store.setStatus("done");

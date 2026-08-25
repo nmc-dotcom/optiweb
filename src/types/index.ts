@@ -37,6 +37,10 @@ export type ResourceType =
 
 export interface CrawlConfig {
   startUrl: string;
+  /** Optional user-provided URL list from textarea/CSV/XLSX. */
+  manualUrls: string[];
+  /** When true, checks only manualUrls and does not expand discovered links/assets. */
+  manualOnly: boolean;
   sameDomainOnly: boolean;
   includeSubdomains: boolean;
   /** Default 100, hard cap 500 (free-tier quota protection). */
@@ -51,9 +55,15 @@ export interface CrawlConfig {
   excludeAuthPages: boolean;
   /** Experimental, default off — auto-submits hidden-only SSO bootstrap forms. See ssoFollow.ts. */
   ssoAutoFollow: boolean;
+  /** Default on — checks through the official W3C validators. */
+  w3cValidation: boolean;
+  /** Default on — requests a read-only audit from the separately deployed browser runner. */
+  browserCompatibility: boolean;
 }
 
 export const DEFAULT_CRAWL_CONFIG: Omit<CrawlConfig, "startUrl"> = {
+  manualUrls: [],
+  manualOnly: false,
   sameDomainOnly: true,
   includeSubdomains: false,
   maxPages: 100,
@@ -63,6 +73,8 @@ export const DEFAULT_CRAWL_CONFIG: Omit<CrawlConfig, "startUrl"> = {
   respectRobotsTxt: true,
   excludeAuthPages: true,
   ssoAutoFollow: false,
+  w3cValidation: true,
+  browserCompatibility: true,
 };
 
 export const MAX_PAGES_LIMIT = 500;
@@ -117,6 +129,52 @@ export interface CrawlSummary {
 }
 
 export type CrawlStatus = "idle" | "running" | "done" | "error";
+
+export type BrowserName = "chrome" | "edge" | "whale";
+export type BrowserAuditStatus = "pass" | "fail" | "unavailable";
+export type BrowserAuditRunStatus = "idle" | "running" | "done" | "unavailable";
+export interface BrowserAuditProgress {
+  completed: number;
+  total: number;
+}
+export type BrowserIssueKind =
+  | "console-error"
+  | "javascript-error"
+  | "resource-failure"
+  | "mixed-content"
+  | "popup-blocked"
+  | "horizontal-overflow"
+  | "clipped-content"
+  | "navigation-error";
+
+export interface BrowserViewportResult {
+  name: "desktop" | "tablet" | "mobile";
+  width: number;
+  height: number;
+  horizontalOverflowPx: number;
+  clippedElementCount: number;
+  screenshotPath?: string;
+}
+
+export interface BrowserAuditIssue {
+  kind: BrowserIssueKind;
+  message: string;
+  viewport?: BrowserViewportResult["name"];
+  url?: string;
+}
+
+export interface BrowserAuditResult {
+  url: string;
+  browser: BrowserName;
+  browserVersion?: string;
+  functionalStatus: BrowserAuditStatus;
+  visualStatus: BrowserAuditStatus;
+  issues: BrowserAuditIssue[];
+  viewports: BrowserViewportResult[];
+  durationMs: number;
+  checkedAt: number;
+  unavailableReason?: string;
+}
 
 export interface QueueItem {
   url: string;

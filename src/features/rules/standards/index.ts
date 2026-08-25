@@ -9,6 +9,8 @@ import { s7InvalidNestingRule } from "./s7InvalidNesting";
 import { s8HreflangRule } from "./s8Hreflang";
 import { s9MixedContentRule } from "./s9MixedContent";
 import { s10InlineHandlersRule } from "./s10InlineHandlers";
+import { s11LegacyTechnologiesRule } from "./s11LegacyTechnologies";
+import { s12InlineCssRule } from "./s12InlineCss";
 
 export const standardsRules: Rule[] = [
   s1DoctypeRule,
@@ -21,4 +23,6 @@ export const standardsRules: Rule[] = [
   s8HreflangRule,
   s9MixedContentRule,
   s10InlineHandlersRule,
+  s11LegacyTechnologiesRule,
+  s12InlineCssRule,
 ];

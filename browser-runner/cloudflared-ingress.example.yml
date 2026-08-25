@@ -1,0 +1,5 @@
+# Merge only this ingress entry into /etc/cloudflared/config.yml, immediately
+# before the final `- service: http_status:404` catch-all. Keep the existing
+# tunnel ID and credentials-file unchanged.
+- hostname: browser-audit.linkstart.ai.kr
+  service: http://localhost:8790

@@ -22,6 +22,14 @@ function isRealContent(result: ProxyResponse): boolean {
   return detectJsRedirect(result.bodyText, result.finalUrl) === null;
 }
 
+function appendGetFormFields(url: string, fields: Record<string, string>): string {
+  const parsed = new URL(url);
+  for (const [name, value] of Object.entries(fields)) {
+    parsed.searchParams.append(name, value);
+  }
+  return parsed.toString();
+}
+
 /**
  * Auto-follows a detected SSO session-bootstrap form — Phase 1.5's `form-submit` pattern
  * only (never `no-links-external-form`/`meta-refresh`; the spec's recursion only re-triggers
@@ -53,13 +61,17 @@ export async function followSsoSession(
 
   while (hops < MAX_HOPS) {
     hops += 1;
+    const submitUrl =
+      currentMethod === "GET"
+        ? appendGetFormFields(currentUrl, currentFields)
+        : currentUrl;
     const body =
       currentMethod === "POST"
         ? new URLSearchParams(currentFields).toString()
         : undefined;
-    const cookieHeader = cookieJar.getCookieHeader(currentUrl);
+    const cookieHeader = cookieJar.getCookieHeader(submitUrl);
 
-    const result = await fetchProxy(currentUrl, {
+    const result = await fetchProxy(submitUrl, {
       timeoutMs,
       method: currentMethod,
       body,

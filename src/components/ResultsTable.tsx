@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import { useI18n } from "../i18n";
 import { useCrawlerStore } from "../features/crawler/useCrawlerStore";
 import { severityBadgeClass } from "../lib/severityStyle";
@@ -39,7 +40,6 @@ type SortDir = "asc" | "desc";
 interface UnifiedRow {
   id: string;
   pageUrl: string;
-  sourcePage: string;
   targetUrl: string;
   status: number | null;
   issue: string;
@@ -86,18 +86,19 @@ export function ResultsTable() {
   const { t } = useI18n();
   const linkResults = useCrawlerStore((s) => s.linkResults);
   const ruleIssues = useCrawlerStore((s) => s.ruleIssues);
+  const browserAuditResults = useCrawlerStore((s) => s.browserAuditResults);
   const [filter, setFilter] = useState<FilterKey>("all");
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("all");
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("status");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [expandedUrls, setExpandedUrls] = useState<Set<string>>(new Set());
   const [selectedPageUrl, setSelectedPageUrl] = useState<string | null>(null);
 
   const rows = useMemo<UnifiedRow[]>(() => {
     const fromLinks: UnifiedRow[] = linkResults.map((link) => ({
       id: link.id,
       pageUrl: link.targetUrl,
-      sourcePage: link.sourceUrl || "(start)",
       targetUrl: link.targetUrl,
       status: link.status,
       issue: link.issue,
@@ -113,7 +114,6 @@ export function ResultsTable() {
     const fromRules: UnifiedRow[] = ruleIssues.map((entry, index) => ({
       id: `rule-${index}-${entry.issue.ruleId}`,
       pageUrl: entry.pageUrl,
-      sourcePage: entry.pageUrl,
       targetUrl: entry.pageUrl,
       status: null,
       issue: t(entry.issue.message, entry.issue.messageVars),
@@ -127,8 +127,26 @@ export function ResultsTable() {
       responseTimeMs: null,
     }));
 
-    return [...fromLinks, ...fromRules];
-  }, [linkResults, ruleIssues, t]);
+    const fromBrowsers: UnifiedRow[] = browserAuditResults.flatMap((result) =>
+      result.issues.map((issue, index) => ({
+        id: `browser-${result.browser}-${index}-${result.url}`,
+        pageUrl: result.url,
+        targetUrl: result.url,
+        status: null,
+        issue: `${result.browser.toUpperCase()}${issue.viewport ? ` · ${issue.viewport}` : ""}: ${issue.message}`,
+        ruleId: `BROWSER-${result.browser.toUpperCase()}`,
+        category: "standards" as const,
+        severity: "warning" as const,
+        isBroken: false,
+        isExternal: false,
+        resourceType: "page" as const,
+        redirectCount: 0,
+        responseTimeMs: result.durationMs,
+      })),
+    );
+
+    return [...fromLinks, ...fromRules, ...fromBrowsers];
+  }, [linkResults, ruleIssues, browserAuditResults, t]);
 
   const visibleRows = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -148,6 +166,16 @@ export function ResultsTable() {
     });
   }, [rows, filter, severityFilter, search, sortKey, sortDir]);
 
+  const groupedRows = useMemo(() => {
+    const groups = new Map<string, UnifiedRow[]>();
+    for (const row of visibleRows) {
+      const group = groups.get(row.targetUrl);
+      if (group) group.push(row);
+      else groups.set(row.targetUrl, [row]);
+    }
+    return [...groups.entries()];
+  }, [visibleRows]);
+
   function toggleSort(key: SortKey) {
     if (sortKey === key) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -155,6 +183,15 @@ export function ResultsTable() {
       setSortKey(key);
       setSortDir("desc");
     }
+  }
+
+  function toggleUrl(targetUrl: string) {
+    setExpandedUrls((current) => {
+      const next = new Set(current);
+      if (next.has(targetUrl)) next.delete(targetUrl);
+      else next.add(targetUrl);
+      return next;
+    });
   }
 
   return (
@@ -201,89 +238,137 @@ export function ResultsTable() {
         </p>
       )}
 
-      <div className="overflow-x-auto rounded-lg border border-border">
-        <table className="w-full min-w-[900px] border-collapse text-sm">
+      <div className="overflow-hidden rounded-lg border border-border">
+        <table className="w-full table-fixed border-collapse text-sm">
           <thead>
             <tr className="border-b border-border bg-secondary text-left text-xs tracking-wide text-muted-foreground uppercase">
-              <th className="px-3 py-2">{t("table.sourcePage")}</th>
               <th className="px-3 py-2">{t("table.targetUrl")}</th>
-              <th
-                className="cursor-pointer px-3 py-2"
-                onClick={() => toggleSort("status")}
-              >
-                {t("table.status")}
-              </th>
-              <th className="px-3 py-2">{t("table.issue")}</th>
-              <th className="px-3 py-2">{t("table.category")}</th>
-              <th
-                className="cursor-pointer px-3 py-2"
-                onClick={() => toggleSort("redirectCount")}
-              >
-                {t("table.redirectCount")}
-              </th>
-              <th
-                className="cursor-pointer px-3 py-2"
-                onClick={() => toggleSort("responseTimeMs")}
-              >
-                {t("table.responseTime")}
-              </th>
+              <th className="w-28 px-3 py-2 text-right">{t("table.issue")}</th>
             </tr>
           </thead>
           <tbody>
             {visibleRows.length === 0 && (
               <tr>
                 <td
-                  colSpan={7}
+                  colSpan={2}
                   className="px-3 py-8 text-center text-muted-foreground"
                 >
                   {t("table.empty")}
                 </td>
               </tr>
             )}
-            {visibleRows.map((row) => (
-              <tr
-                key={row.id}
-                onClick={() => setSelectedPageUrl(row.pageUrl)}
-                className="cursor-pointer border-b border-border last:border-0 hover:bg-secondary/50"
-              >
-                <td
-                  className="max-w-xs truncate px-3 py-2 text-muted-foreground"
-                  title={row.sourcePage}
-                >
-                  {row.sourcePage}
-                </td>
-                <td
-                  className="max-w-xs truncate px-3 py-2"
-                  title={row.targetUrl}
-                >
-                  {row.targetUrl}
-                </td>
-                <td className="px-3 py-2 tabular-nums">{row.status || "—"}</td>
-                <td className="px-3 py-2">
-                  <span className="inline-flex flex-wrap items-center gap-1.5">
-                    {row.ruleId && (
-                      <span className="rounded-full bg-secondary px-1.5 py-0.5 text-[11px] font-semibold text-foreground">
-                        {row.ruleId}
-                      </span>
-                    )}
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${severityBadgeClass(row.severity)}`}
-                    >
-                      {row.issue}
-                    </span>
-                  </span>
-                </td>
-                <td className="px-3 py-2 text-muted-foreground">
-                  {t(`category.${row.category}`)}
-                </td>
-                <td className="px-3 py-2 tabular-nums">{row.redirectCount}</td>
-                <td className="px-3 py-2 tabular-nums">
-                  {row.responseTimeMs !== null
-                    ? `${row.responseTimeMs} ms`
-                    : "—"}
-                </td>
-              </tr>
-            ))}
+            {groupedRows.map(([targetUrl, groupRows]) => {
+              const isExpanded = expandedUrls.has(targetUrl);
+              return (
+                <Fragment key={targetUrl}>
+                  <tr className="border-b border-border bg-card">
+                    <td colSpan={2} className="p-0">
+                      <button
+                        type="button"
+                        aria-expanded={isExpanded}
+                        onClick={() => toggleUrl(targetUrl)}
+                        className="flex w-full items-center gap-2 px-3 py-3 text-left font-medium transition hover:bg-secondary/60"
+                      >
+                        <ChevronDown
+                          aria-hidden="true"
+                          className={`size-4 shrink-0 text-muted-foreground transition-transform ${
+                            isExpanded ? "rotate-0" : "-rotate-90"
+                          }`}
+                        />
+                        <span
+                          className="min-w-0 flex-1 truncate"
+                          title={targetUrl}
+                        >
+                          {targetUrl}
+                        </span>
+                        <span className="w-24 shrink-0 text-right">
+                          <span className="rounded-full bg-secondary px-2 py-0.5 text-xs text-muted-foreground">
+                            {t("table.resultCount", {
+                              count: groupRows.length,
+                            })}
+                          </span>
+                        </span>
+                      </button>
+                    </td>
+                  </tr>
+
+                  {isExpanded && (
+                    <tr className="border-b border-border bg-background/40">
+                      <td colSpan={2} className="p-0 pl-8">
+                        <table className="w-full table-fixed border-collapse text-sm">
+                          <thead>
+                            <tr className="border-b border-border bg-secondary/60 text-left text-xs text-muted-foreground">
+                              <th
+                                className="w-20 cursor-pointer px-3 py-2"
+                                onClick={() => toggleSort("status")}
+                              >
+                                {t("table.status")}
+                              </th>
+                              <th className="w-[42%] px-3 py-2">
+                                {t("table.issue")}
+                              </th>
+                              <th className="w-24 px-3 py-2">
+                                {t("table.category")}
+                              </th>
+                              <th
+                                className="w-28 cursor-pointer px-3 py-2"
+                                onClick={() => toggleSort("redirectCount")}
+                              >
+                                {t("table.redirectCount")}
+                              </th>
+                              <th
+                                className="w-28 cursor-pointer px-3 py-2"
+                                onClick={() => toggleSort("responseTimeMs")}
+                              >
+                                {t("table.responseTime")}
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {groupRows.map((row) => (
+                              <tr
+                                key={row.id}
+                                onClick={() => setSelectedPageUrl(row.pageUrl)}
+                                className="cursor-pointer border-b border-border last:border-0 hover:bg-secondary/50"
+                              >
+                                <td className="px-3 py-2 tabular-nums">
+                                  {row.status || "—"}
+                                </td>
+                                <td className="break-words px-3 py-2">
+                                  <span className="inline-flex flex-wrap items-center gap-1.5">
+                                    {row.ruleId && (
+                                      <span className="rounded-full bg-secondary px-1.5 py-0.5 text-[11px] font-semibold text-foreground">
+                                        {row.ruleId}
+                                      </span>
+                                    )}
+                                    <span
+                                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${severityBadgeClass(row.severity)}`}
+                                    >
+                                      {row.issue}
+                                    </span>
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2 text-muted-foreground">
+                                  {t(`category.${row.category}`)}
+                                </td>
+                                <td className="px-3 py-2 tabular-nums">
+                                  {row.redirectCount}
+                                </td>
+                                <td className="px-3 py-2 tabular-nums">
+                                  {row.responseTimeMs !== null
+                                    ? `${row.responseTimeMs} ms`
+                                    : "—"}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>

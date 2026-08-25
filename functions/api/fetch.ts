@@ -88,13 +88,42 @@ function isPrivateIPv4(host: string): boolean {
   return false;
 }
 
+function ipv4FromIpv6Mapped(host: string): string | null {
+  const mapped = /^::ffff:(.+)$/i.exec(host);
+  if (!mapped?.[1]) return null;
+
+  const tail = mapped[1];
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(tail)) return tail;
+
+  const groups = tail.split(":");
+  if (groups.length !== 2) return null;
+  const high = Number.parseInt(groups[0] ?? "", 16);
+  const low = Number.parseInt(groups[1] ?? "", 16);
+  if (
+    !Number.isInteger(high) ||
+    !Number.isInteger(low) ||
+    high < 0 ||
+    high > 0xffff ||
+    low < 0 ||
+    low > 0xffff
+  ) {
+    return null;
+  }
+  return [high >> 8, high & 0xff, low >> 8, low & 0xff].join(".");
+}
+
 function isBlockedHost(hostname: string): boolean {
-  const h = hostname.toLowerCase().replace(/\.$/, "");
+  const h = hostname
+    .toLowerCase()
+    .replace(/\.$/, "")
+    .replace(/^\[|\]$/g, "");
   if (h === "localhost" || h === "0.0.0.0") return true;
   if (h.endsWith(".internal") || h.endsWith(".local")) return true;
-  if (h === "::1" || h === "[::1]") return true;
+  if (h === "::" || h === "::1") return true;
   if (h.startsWith("fe80:") || h.startsWith("fc") || h.startsWith("fd"))
     return true; // IPv6 link-local/ULA
+  const mappedIpv4 = ipv4FromIpv6Mapped(h);
+  if (mappedIpv4 && isPrivateIPv4(mappedIpv4)) return true;
   if (isPrivateIPv4(h)) return true;
   return false;
 }
@@ -176,9 +205,7 @@ async function readCappedText(
 // ---------------------------------------------------------------------------
 
 interface FollowOptions {
-  method: "GET" | "HEAD" | "POST";
-  body?: string;
-  cookieHeader?: string;
+  method: "GET" | "HEAD";
 }
 
 interface FollowResult {
@@ -188,7 +215,22 @@ interface FollowResult {
   response?: Response;
   /** Set-Cookie headers seen across every hop of this call (raw, unparsed). */
   setCookies: string[];
-  errorType?: "timeout" | "network" | "ssrf_blocked" | "too_many_redirects";
+  errorType?:
+    | "timeout"
+    | "network"
+    | "ssrf_blocked"
+    | "origin_blocked"
+    | "too_many_redirects";
+}
+
+function isSameHostFamily(hostname: string, allowedHostname: string): boolean {
+  const current = hostname.toLowerCase().replace(/\.$/, "");
+  const allowed = allowedHostname.toLowerCase().replace(/\.$/, "");
+  return (
+    current === allowed ||
+    current.endsWith(`.${allowed}`) ||
+    allowed.endsWith(`.${current}`)
+  );
 }
 
 async function followRedirects(
@@ -199,8 +241,6 @@ async function followRedirects(
   const seen = new Set<string>();
   const setCookies: string[] = [];
   let current = startUrl;
-  let method = options.method;
-  let body = options.body;
 
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     const key = current.toString();
@@ -208,6 +248,17 @@ async function followRedirects(
       return { finalUrl: key, chain, isRedirectLoop: true, setCookies };
     }
     seen.add(key);
+
+    // A redirect must not silently expand the audit to an unrelated site.
+    if (!isSameHostFamily(current.hostname, startUrl.hostname)) {
+      return {
+        finalUrl: key,
+        chain,
+        isRedirectLoop: false,
+        errorType: "origin_blocked",
+        setCookies,
+      };
+    }
 
     const validation = validateTargetUrl(key);
     if (!validation.ok) {
@@ -225,15 +276,11 @@ async function followRedirects(
     let res: Response;
     try {
       const headers: Record<string, string> = { "User-Agent": USER_AGENT };
-      if (options.cookieHeader) headers["Cookie"] = options.cookieHeader;
-      if (method === "POST")
-        headers["Content-Type"] = "application/x-www-form-urlencoded";
       res = await fetch(current.toString(), {
-        method,
+        method: options.method,
         redirect: "manual",
         signal: controller.signal,
         headers,
-        body: method === "POST" ? body : undefined,
       });
     } catch (err) {
       clearTimeout(timeoutId);
@@ -263,16 +310,6 @@ async function followRedirects(
           errorType: "network",
           setCookies,
         };
-      }
-      // Browser-realistic redirect semantics: 303 (and, by long-standing real-world
-      // convention that servers rely on, 301/302 too) downgrades POST to GET and drops the
-      // body; 307/308 preserve method+body.
-      if (
-        method === "POST" &&
-        (res.status === 301 || res.status === 302 || res.status === 303)
-      ) {
-        method = "GET";
-        body = undefined;
       }
       continue;
     }
@@ -391,18 +428,9 @@ export const onRequestGet: PagesFunction = async (context) => {
 };
 
 // ---------------------------------------------------------------------------
-// POST handler — used only by the SSO auto-follow feature (src/features/crawler/ssoFollow.ts)
-// to submit a hidden-only bootstrap form and carry a Cookie header. The client sends the
-// target url/method/body/cookie as a JSON body (not query params) since SSO hidden-field
-// payloads like a SAMLRequest can be several KB, too large to safely round-trip in a URL.
+// POST is deliberately unavailable. The audit is read-only and never submits a target
+// site's forms, credentials, mutations, or session bootstrap requests.
 // ---------------------------------------------------------------------------
-
-interface SsoPostPayload {
-  url?: unknown;
-  method?: unknown;
-  body?: unknown;
-  cookie?: unknown;
-}
 
 export const onRequestPost: PagesFunction = async (context) => {
   const { request } = context;
@@ -419,81 +447,5 @@ export const onRequestPost: PagesFunction = async (context) => {
     );
   }
 
-  let payload: SsoPostPayload;
-  try {
-    payload = await request.json();
-  } catch {
-    return json({ error: "invalid_json" }, 400);
-  }
-
-  const requestedUrl = typeof payload.url === "string" ? payload.url : null;
-  if (!requestedUrl) {
-    return json({ error: "missing_url" }, 400);
-  }
-
-  const initialValidation = validateTargetUrl(requestedUrl);
-  if (!initialValidation.ok) {
-    return json({ error: initialValidation.reason }, 400);
-  }
-
-  const method: "GET" | "POST" = payload.method === "GET" ? "GET" : "POST";
-  const body =
-    method === "POST" && typeof payload.body === "string"
-      ? payload.body
-      : undefined;
-  const cookieHeader =
-    typeof payload.cookie === "string" ? payload.cookie : undefined;
-
-  const startedAt = Date.now();
-  const result = await followRedirects(initialValidation.url, {
-    method,
-    body,
-    cookieHeader,
-  });
-
-  if (result.errorType || !result.response) {
-    return json({
-      requestedUrl,
-      finalUrl: result.finalUrl,
-      status: 0,
-      statusText: "",
-      redirectChain: result.chain,
-      isRedirectLoop: result.isRedirectLoop,
-      contentType: null,
-      xRobotsTag: null,
-      bodyTruncated: false,
-      responseTimeMs: Date.now() - startedAt,
-      errorType:
-        result.errorType ??
-        (result.isRedirectLoop ? "too_many_redirects" : "network"),
-      setCookies: result.setCookies,
-    });
-  }
-
-  const res = result.response;
-  const contentType = res.headers.get("content-type");
-  const xRobotsTag = res.headers.get("x-robots-tag");
-
-  let bodyText: string | undefined;
-  let bodyTruncated = false;
-  if (isTextContentType(contentType)) {
-    const read = await readCappedText(res, MAX_BODY_BYTES);
-    bodyText = read.text;
-    bodyTruncated = read.truncated;
-  }
-
-  return json({
-    requestedUrl,
-    finalUrl: result.finalUrl,
-    status: res.status,
-    statusText: res.statusText,
-    redirectChain: result.chain,
-    isRedirectLoop: result.isRedirectLoop,
-    contentType,
-    xRobotsTag,
-    bodyText,
-    bodyTruncated,
-    responseTimeMs: Date.now() - startedAt,
-    setCookies: result.setCookies,
-  });
+  return json({ error: "read_only_mode" }, 405);
 };

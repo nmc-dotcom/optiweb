@@ -1,0 +1,17 @@
+{
+  "name": "optiweb-browser-runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "diagnose": "node src/diagnose.mjs",
+    "start": "node src/server.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "playwright-core": "1.62.1"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

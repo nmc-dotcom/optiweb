@@ -1,0 +1,30 @@
+services:
+  browser-runner:
+    build:
+      context: .
+    image: optiweb-browser-runner:local
+    restart: unless-stopped
+    init: true
+    environment:
+      RUNNER_API_TOKEN_FILE: /run/secrets/runner_api_token
+      PAGE_TIMEOUT_MS: ${PAGE_TIMEOUT_MS:-15000}
+    secrets:
+      - runner_api_token
+    ports:
+      # 8788 is already used by the local Pages/Hermes service on this host.
+      - "127.0.0.1:${RUNNER_PORT:-8790}:8788"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=1g
+      - /home/pwuser:rw,nosuid,nodev,uid=1001,gid=1001,mode=0700,size=256m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512
+    mem_limit: 3g
+    cpus: 2.0
+
+secrets:
+  runner_api_token:
+    file: ${RUNNER_TOKEN_FILE:-./runner-token}

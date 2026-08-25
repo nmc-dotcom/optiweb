@@ -58,7 +58,9 @@ export function parseRobotsTxt(text: string): RobotsRules {
 function patternToRegExp(pattern: string): RegExp {
   const endsWithDollar = pattern.endsWith("$");
   const body = endsWithDollar ? pattern.slice(0, -1) : pattern;
-  const escaped = body.replace(/[.+^{}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+  const escaped = body
+    .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*/g, ".*");
   return new RegExp("^" + escaped + (endsWithDollar ? "$" : ""));
 }
 
@@ -73,6 +75,12 @@ export function isPathAllowed(pathname: string, rules: RobotsRules): boolean {
     }
   }
   return best ? best.type === "allow" : true;
+}
+
+/** Convenience helper for crawler URLs: robots patterns may include query markers like `?`. */
+export function isUrlAllowed(url: string, rules: RobotsRules): boolean {
+  const parsed = new URL(url);
+  return isPathAllowed(parsed.pathname + parsed.search, rules);
 }
 
 /** Fetches and parses `/robots.txt` for the given origin via the proxy. Returns empty rules on any failure. */

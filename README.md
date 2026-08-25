@@ -4,6 +4,11 @@ A website auditor (broken links / redirects / SEO / accessibility / web standard
 crawls entirely from the browser and uses Cloudflare Pages Functions only as a thin,
 single-URL proxy.
 
+It can also run a manual URL-list check: paste URLs directly or upload a CSV/TXT/XLSX
+spreadsheet, then optionally enable "manual list only" to verify exactly those addresses
+without expanding discovered links. Results include a lightweight in-app link graph that
+visualizes page-to-page relationships from the crawl output.
+
 > **Status: Phase 3 (SSO session bootstrap auto-follow).** Phase 1 (crawl engine, proxy),
 > Phase 1.5 (JS/SSO redirect detection), and Phase 2 (SEO/A11y/Standards rule engines) are
 > done. This pass adds an opt-in auto-follow of the specific "anonymous SSO session
@@ -189,6 +194,40 @@ src/
   components/         CrawlForm, ProgressBar, SummaryCards, ResultsTable, PageDetailModal, Layout
   i18n/               t() hook + ko.json/en.json (no hardcoded UI strings, incl. rule messages)
 ```
+
+## Read-only browser compatibility runner
+
+The second-phase browser checks live in `browser-runner/`, a dedicated Node.js service.
+The Pages Function at `functions/api/browser-audit.ts` validates the fixed audit request
+and forwards it with a server-side bearer token, so the runner URL and token are never
+included in the browser bundle.
+
+The runner collects console/JavaScript/resource failures and mixed content once per URL,
+then measures horizontal overflow and clipped visible controls at desktop (1440×900),
+tablet (768×1024), and mobile (390×844) sizes. Findings appear in the URL accordion,
+page detail, compatibility summary, and both Excel report types. A missing executable is
+reported as unavailable and is never converted to a passing result.
+
+The third-phase operations UI also checks the authenticated runner health endpoint,
+shows installed browser/runtime status and batch progress, retries temporary runner
+busy/gateway failures with bounded backoff, and offers a manual browser-only recheck
+without repeating the full crawl.
+
+Required deployment settings:
+
+- Runner: `RUNNER_API_TOKEN`, plus `CHROME_PATH`, `EDGE_PATH`, and `WHALE_PATH` when the
+  executables are outside the detected standard Linux paths.
+- Cloudflare Pages: `BROWSER_RUNNER_URL` and secret `BROWSER_RUNNER_TOKEN` with the same
+  token value.
+- Infrastructure: run the service as an unprivileged user in a disposable container and
+  enforce an outbound firewall that blocks private, loopback, link-local, and metadata
+  networks. Application-level DNS checks are also present, but the firewall is required
+  as defense in depth against DNS rebinding.
+
+See `browser-runner/README.md` for its standalone start command and complete safety
+boundary. A hardened Docker Compose deployment is included; it installs Edge and
+Whale inside the container instead of changing browsers on the host, and binds the
+runner to `127.0.0.1` by default.
 
 ## Local development
 

@@ -67,14 +67,14 @@ async function fetchOnce(
 
   try {
     let res: Response;
-    if (options.method === "POST") {
+    if (options.method === "POST" || options.cookie) {
       res = await fetch("/api/fetch", {
         method: "POST",
         signal: controller.signal,
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           url,
-          method: "POST",
+          method: options.method ?? "GET",
           body: options.body,
           cookie: options.cookie,
         }),

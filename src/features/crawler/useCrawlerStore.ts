@@ -1,6 +1,9 @@
 import { create } from "zustand";
 import type {
   CrawlConfig,
+  BrowserAuditProgress,
+  BrowserAuditResult,
+  BrowserAuditRunStatus,
   CrawlStatus,
   CrawlSummary,
   LinkResult,
@@ -24,6 +27,9 @@ interface CrawlerState {
   pageResults: PageResult[];
   linkResults: LinkResult[];
   ruleIssues: RuleIssueEntry[];
+  browserAuditResults: BrowserAuditResult[];
+  browserAuditStatus: BrowserAuditRunStatus;
+  browserAuditProgress: BrowserAuditProgress;
   siteIndex: SiteIndex;
   /** SSO auto-follow's cookie jar — one stable instance per store, cleared on reset() and
    * again by crawlEngine when a crawl finishes. Not part of reactive state: nothing needs to
@@ -37,6 +43,9 @@ interface CrawlerState {
   addPageResult: (result: PageResult) => void;
   addLinkResult: (result: LinkResult) => void;
   addRuleIssues: (pageUrl: string, issues: Issue[]) => void;
+  setBrowserAuditStatus: (status: BrowserAuditRunStatus) => void;
+  setBrowserAuditProgress: (progress: BrowserAuditProgress) => void;
+  setBrowserAuditResults: (results: BrowserAuditResult[]) => void;
   updateSiteIndex: (
     pageUrl: string,
     title: string | null,
@@ -62,6 +71,9 @@ export const useCrawlerStore = create<CrawlerState>((set, get) => ({
   pageResults: [],
   linkResults: [],
   ruleIssues: [],
+  browserAuditResults: [],
+  browserAuditStatus: "idle",
+  browserAuditProgress: { completed: 0, total: 0 },
   siteIndex: createEmptySiteIndex(),
   cookieJar: createCookieJar(),
   queuedCount: 0,
@@ -100,6 +112,9 @@ export const useCrawlerStore = create<CrawlerState>((set, get) => ({
       ];
       const summary = { ...state.summary };
       for (const issue of issues) {
+        // `info` includes successful W3C validation and non-actionable notes.
+        // Summary cards are issue counts, so only errors and warnings belong here.
+        if (issue.severity === "info") continue;
         if (issue.category === "seo") summary.seoWarnings += 1;
         if (issue.category === "a11y") summary.a11yIssues += 1;
         if (issue.category === "standards") summary.standardsIssues += 1;
@@ -107,6 +122,11 @@ export const useCrawlerStore = create<CrawlerState>((set, get) => ({
       return { ruleIssues, summary };
     });
   },
+
+  setBrowserAuditStatus: (browserAuditStatus) => set({ browserAuditStatus }),
+  setBrowserAuditProgress: (browserAuditProgress) =>
+    set({ browserAuditProgress }),
+  setBrowserAuditResults: (browserAuditResults) => set({ browserAuditResults }),
 
   updateSiteIndex: (pageUrl, title, description) =>
     set((state) => {
@@ -131,6 +151,9 @@ export const useCrawlerStore = create<CrawlerState>((set, get) => ({
       pageResults: [],
       linkResults: [],
       ruleIssues: [],
+      browserAuditResults: [],
+      browserAuditStatus: "idle",
+      browserAuditProgress: { completed: 0, total: 0 },
       siteIndex: createEmptySiteIndex(),
       queuedCount: 0,
       processedCount: 0,

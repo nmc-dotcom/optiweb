@@ -87,6 +87,13 @@
   #root {
     height: 100%;
   }
+  html,
+  body {
+    overflow-x: hidden;
+  }
+  #root {
+    zoom: 0.9;
+  }
   body {
     @apply bg-background text-foreground;
     font-family: var(--font-sans);
